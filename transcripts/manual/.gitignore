@@ -1,0 +1,5 @@
+# Cached transcripts
+# Ignore everything in this directory
+*
+# Except this file
+!.gitignore
