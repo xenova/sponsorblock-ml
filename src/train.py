@@ -1,10 +1,8 @@
 from preprocess import load_datasets, DatasetArguments
 from predict import ClassifierArguments, SPONSOR_MATCH_RE, DEFAULT_TOKEN_PREFIX
-from shared import device
-from shared import GeneralArguments, OutputArguments
+from shared import device, GeneralArguments, OutputArguments
 from model import ModelArguments
 import transformers
-import logging
 from model import get_model, get_tokenizer
 import logging
 import os

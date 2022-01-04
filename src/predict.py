@@ -1,3 +1,4 @@
+from transformers.trainer_utils import get_last_checkpoint
 from shared import OutputArguments
 from typing import Optional
 from segment import (
@@ -21,7 +22,6 @@ from dataclasses import dataclass, field
 from transformers import HfArgumentParser
 from shared import device
 import logging
-from transformers.trainer_utils import get_last_checkpoint
 
 
 def seconds_to_time(seconds):
@@ -31,12 +31,7 @@ def seconds_to_time(seconds):
 
 
 @dataclass
-class PredictArguments:
-
-    video_id: str = field(
-        metadata={
-            'help': 'Video to predict sponsorship segments for'}
-    )
+class TrainingOutputArguments:
 
     model_path: str = field(
         default=None,
@@ -57,6 +52,15 @@ class PredictArguments:
         else:
             raise Exception(
                 'Unable to find model, explicitly set `--model_path`')
+
+
+@dataclass
+class PredictArguments(TrainingOutputArguments):
+    video_id: str = field(
+        default=None,
+        metadata={
+            'help': 'Video to predict sponsorship segments for'}
+    )
 
 
 SPONSOR_MATCH_RE = fr'(?<={CustomTokens.START_SPONSOR.value})\s*(.*?)\s*(?={CustomTokens.END_SPONSOR.value}|$)'
@@ -251,6 +255,10 @@ def main():
         ClassifierArguments
     ))
     predict_args, segmentation_args, classifier_args = hf_parser.parse_args_into_dataclasses()
+
+    if predict_args.video_id is None:
+        print('No video ID supplied. Use `--video_id`.')
+        return
 
     model = AutoModelForSeq2SeqLM.from_pretrained(predict_args.model_path)
     model.to(device())

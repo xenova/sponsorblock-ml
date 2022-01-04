@@ -7,7 +7,7 @@ from transformers import (
 from preprocess import DatasetArguments, ProcessedArguments, get_words
 from model import get_classifier_vectorizer
 from shared import device
-from predict import ClassifierArguments, PredictArguments, predict, filter_predictions
+from predict import ClassifierArguments, predict, filter_predictions, TrainingOutputArguments
 from segment import word_start, word_end, SegmentationArguments, add_labels_to_words
 import pandas as pd
 from dataclasses import dataclass, field
@@ -19,7 +19,7 @@ import random
 
 
 @dataclass
-class EvaluationArguments:
+class EvaluationArguments(TrainingOutputArguments):
     """
     Arguments pertaining to which model/config/tokenizer we are going to fine-tune from.
     """
@@ -29,8 +29,7 @@ class EvaluationArguments:
             'help': 'The number of videos to test on'
         }
     )
-    model_path: Optional[str] = PredictArguments.__dataclass_fields__[
-        'model_path']
+
     data_dir: Optional[str] = DatasetArguments.__dataclass_fields__['data_dir']
     dataset: Optional[str] = DatasetArguments.__dataclass_fields__[
         'validation_file']
