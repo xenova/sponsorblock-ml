@@ -25,9 +25,10 @@ import logging
 
 
 def seconds_to_time(seconds):
+    fractional = str(round(seconds % 1, 3))[1:]
     h, remainder = divmod(abs(int(seconds)), 3600)
     m, s = divmod(remainder, 60)
-    return f"{'-' if seconds < 0 else ''}{h:02}:{m:02}:{s:02}"
+    return f"{'-' if seconds < 0 else ''}{h:02}:{m:02}:{s:02}{fractional}"
 
 
 @dataclass
@@ -266,20 +267,23 @@ def main():
     tokenizer = AutoTokenizer.from_pretrained(predict_args.model_path)
 
     predict_args.video_id = predict_args.video_id.strip()
-    print(
-        f'Predicting for https://www.youtube.com/watch?v={predict_args.video_id}')
     predictions = predict(predict_args.video_id, model, tokenizer,
                           segmentation_args, classifier_args=classifier_args)
 
-    for prediction in predictions:
-        print(' '.join([w['text'] for w in prediction['words']]))
-        print(seconds_to_time(prediction['start']),
-              '-->', seconds_to_time(prediction['end']))
-        print(prediction['start'], '-->', prediction['end'])
-        print(prediction['probability'])
-        print()
+    video_url = f'https://www.youtube.com/watch?v={predict_args.video_id}'
+    if not predictions:
+        print('No predictions found for', video_url)
+        return
 
-    print()
+    print(len(predictions), 'predictions found for', video_url)
+    for index, prediction in enumerate(predictions, start=1):
+        print(f'Prediction #{index}:')
+        print('Text: "',
+              ' '.join([w['text'] for w in prediction['words']]), '"', sep='')
+        print('Time:', seconds_to_time(
+            prediction['start']), '-->', seconds_to_time(prediction['end']))
+        print('Probability:', prediction['probability'])
+        print()
 
 
 if __name__ == '__main__':
