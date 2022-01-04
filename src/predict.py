@@ -171,7 +171,7 @@ DEFAULT_TOKEN_PREFIX = 'summarize: '
 def predict_sponsor_text(text, model, tokenizer):
     """Given a body of text, predict the words which are part of the sponsor"""
     input_ids = tokenizer(
-        f'{DEFAULT_TOKEN_PREFIX}{text}', return_tensors='pt', truncation=True).input_ids
+        f'{DEFAULT_TOKEN_PREFIX}{text}', return_tensors='pt', truncation=True).input_ids.to(device())
 
     # Can't be longer than input length + SAFETY_TOKENS or model input dim
     max_out_len = min(len(input_ids[0]) + SAFETY_TOKENS, model.model_dim)
