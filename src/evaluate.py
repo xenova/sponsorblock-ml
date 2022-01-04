@@ -200,11 +200,7 @@ def main():
 
                 # Make predictions
                 predictions = predict(video_id, model, tokenizer,
-                                      segmentation_args, words)
-
-                # Filter predictions
-                predictions = filter_predictions(
-                    predictions, classifier, vectorizer, classifier_args)
+                                      segmentation_args, words, classifier_args)
 
                 labelled_words = add_labels_to_words(words, sponsor_segments)
                 met = calculate_metrics(labelled_words, predictions)
