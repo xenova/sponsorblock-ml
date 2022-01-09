@@ -101,11 +101,20 @@ def get_tokenizer(model_args, use_cache=True):
     return tokenizer
 
 
-def get_classifier_vectorizer(classifier_args):
-    with open(os.path.join(classifier_args.classifier_dir, classifier_args.classifier_file), 'rb') as fp:
-        classifier = pickle.load(fp)
+CLASSIFIER_CACHE = {}
+def get_classifier_vectorizer(classifier_args, use_cache=True):
+    classifier_path = os.path.join(classifier_args.classifier_dir, classifier_args.classifier_file)
+    if use_cache and classifier_path in CLASSIFIER_CACHE:
+        classifier = CLASSIFIER_CACHE[classifier_path]
+    else:
+        with open(classifier_path, 'rb') as fp:
+            classifier = CLASSIFIER_CACHE[classifier_path] = pickle.load(fp)
 
-    with open(os.path.join(classifier_args.classifier_dir, classifier_args.vectorizer_file), 'rb') as fp:
-        vectorizer = pickle.load(fp)
+    vectorizer_path = os.path.join(classifier_args.classifier_dir, classifier_args.vectorizer_file)
+    if use_cache and vectorizer_path in CLASSIFIER_CACHE:
+        vectorizer = CLASSIFIER_CACHE[vectorizer_path]
+    else:
+        with open(vectorizer_path, 'rb') as fp:
+            vectorizer = CLASSIFIER_CACHE[vectorizer_path] = pickle.load(fp)
 
     return classifier, vectorizer
