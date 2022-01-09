@@ -1,5 +1,7 @@
+import re
 import asyncio
 import os
+
 
 class Job:
     def __init__(self, function, *args, **kwargs) -> None:
@@ -84,3 +86,7 @@ class InterruptibleThreadPool:
             self.loop.close()
 
         return self.jobs
+
+
+def re_findall(pattern, string):
+    return [m.groupdict() for m in re.finditer(pattern, string)]

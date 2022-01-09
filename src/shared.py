@@ -7,16 +7,17 @@ from typing import Optional
 from dataclasses import dataclass, field
 from enum import Enum
 
-
 class CustomTokens(Enum):
+    EXTRACT_SEGMENTS_PREFIX = 'EXTRACT_SEGMENTS: '
+
     URL = 'URL_TOKEN'
     HYPHENATED_URL = 'HYPHENATED_URL_TOKEN'
     NUMBER_PERCENTAGE = 'NUMBER_PERCENTAGE_TOKEN'
     NUMBER = 'NUMBER_TOKEN'
 
-    START_SPONSOR = 'START_SPONSOR'
-    END_SPONSOR = 'END_SPONSOR'
-    NO_SPONSOR = 'NO_SPONSOR_FOUND'
+    START_SEGMENT = 'START_SEGMENT_TOKEN'
+    END_SEGMENT = 'END_SEGMENT_TOKEN'
+    NO_SEGMENT = 'NO_SEGMENT_FOUND'
 
     SHORT_HYPHENATED = 'SHORT_HYPHENATED_TOKEN'
     LONG_WORD = 'LONG_WORD_TOKEN'
@@ -26,8 +27,6 @@ class CustomTokens(Enum):
     APPLAUSE = '[Applause]'
     LAUGHTER = '[Laughter]'
 
-    PROFANITY_RAW = '[ __ ]'  # How YouTube transcribes profanity
-    PROFANITY_CONVERTED = '*****'  # Safer version for tokenizing
     PROFANITY = 'PROFANITY_TOKEN'
 
     @classmethod

@@ -25,7 +25,7 @@ def get_overlapping_chunks_of_tokens(tokens, size, overlap):
 
 
 # Generate up to max_tokens - SAFETY_TOKENS
-SAFETY_TOKENS = 8
+SAFETY_TOKENS = 12
 
 
 # TODO play around with this?
@@ -36,10 +36,10 @@ def add_labels_to_words(words, sponsor_segments):
 
     # TODO binary search
     for word in words:
-        word['sponsor'] = False
+        word['category'] = None
         for sponsor_segment in sponsor_segments:
             if sponsor_segment['start'] <= word['start'] <= sponsor_segment['end']:
-                word['sponsor'] = True
+                word['category'] = sponsor_segment['category']
 
     # TODO use extract_segment with mapping function?
     # TODO remove sponsor segments that contain mostly empty space?

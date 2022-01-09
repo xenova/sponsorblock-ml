@@ -1,5 +1,6 @@
+from datetime import datetime
 import itertools
-from typing import Optional
+from typing import Optional, List
 from datasets import load_dataset
 from model import ModelArguments
 import segment
@@ -24,8 +25,10 @@ def find(s, ch):
     return [i for i, ltr in enumerate(s) if ltr == ch]
 
 
-def wordify(transcript):
+def wordify(transcript, maximum_wps=1):
     """Try to replicate format for automatically generated transcripts"""
+
+    # Do not allow segments to be on screen for too long using maximum_wps
     words = []
 
     for line_index, line in enumerate(transcript):
@@ -34,9 +37,14 @@ def wordify(transcript):
             continue
 
         start = line['start']
-        next_start = transcript[line_index +
-                                1]['start'] if line_index < len(transcript) - 1 else float('inf')
-        end = min(start + line['duration'], next_start)
+        next_start = transcript[line_index + 1]['start'] \
+            if line_index < len(transcript) - 1 else float('inf')
+
+        # Use maximum wps to calculate latest end (to avoid segments which stay on screen too long)
+        longest_duration = maximum_wps * text.count(' ')
+        latest_end = start + longest_duration
+        end = min(start + line['duration'], next_start, latest_end)
+
         duration = end - start
 
         indices = find(text, ' ') + [len(text)]
@@ -52,9 +60,9 @@ def wordify(transcript):
             w_start = start + percentage * duration
 
             words.append({
-                'start': round(w_start, 5),
-                'duration': round(w_duration, 5),
-                'end': round(w_start + w_duration, 5),
+                'start': round(w_start, 3),
+                'duration': round(w_duration, 3),
+                'end': round(w_start + w_duration, 3),
                 'text': word,
             })
 
@@ -67,6 +75,10 @@ def get_manual_words(transcript_list):
     transcript = transcript_list.find_manually_created_transcript(
         ['en-GB', 'en-US', 'en']).fetch()
     return wordify(transcript)
+
+
+PROFANITY_RAW = '[ __ ]'  # How YouTube transcribes profanity
+PROFANITY_CONVERTED = '*****'  # Safer version for tokenizing
 
 
 def get_auto_words(transcript_list):
@@ -82,7 +94,7 @@ def get_auto_words(transcript_list):
             offset_ms = word.get('tOffsetMs', 0)
 
             texts = word['utf8'].replace(
-                CustomTokens.PROFANITY_RAW.value, CustomTokens.PROFANITY_CONVERTED.value
+                PROFANITY_RAW, PROFANITY_CONVERTED
             ).strip().split()
 
             for text in texts:
@@ -94,7 +106,7 @@ def get_auto_words(transcript_list):
     return words
 
 
-def get_words(video_id, process=True, fallback=False, transcript_type='auto'):
+def get_words(video_id, process=True, fallback=True, transcript_type='auto'):
     """Get parsed video transcript with caching system
     returns None if not processed yet and process is False
     """
@@ -148,21 +160,31 @@ def extract_sponsors(words, min_sponsor_segment_length=5):
 
     paragraphs = []
     current = []
+    prev_category = None
     for word in words:
-        if not word.get('sponsor') and not current:
-            continue
+        if word['category'] is None:  # and not current:
+            continue  # Skip unimportant
 
-        if word['sponsor']:
+        if word['category'] == prev_category:
             current.append(word['text'])
         else:
-            paragraphs.append(current)
+            paragraphs.append({
+                'words': current,
+                'category': prev_category,
+            })
             current = []
-    if current:
-        paragraphs.append(current)
+
+        prev_category = word['category']
+
+    if current and prev_category is not None:
+        paragraphs.append({
+            'words': current,
+            'category': prev_category,
+        })
 
     # Remove all too short:
     paragraphs = list(filter(lambda x: len(
-        x) >= min_sponsor_segment_length, paragraphs))
+        x['words']) >= min_sponsor_segment_length, paragraphs))
 
     return paragraphs
 
@@ -203,10 +225,8 @@ def clean_text(text):
     text = re.sub(NUM_REGEX, CustomTokens.NUMBER.value, text)
 
     # Replace profanity with special token
-    text = text.replace(CustomTokens.PROFANITY_RAW.value,
-                        CustomTokens.PROFANITY.value)
-    text = text.replace(CustomTokens.PROFANITY_CONVERTED.value,
-                        CustomTokens.PROFANITY.value)
+    text = text.replace(PROFANITY_RAW, CustomTokens.PROFANITY.value)
+    text = text.replace(PROFANITY_CONVERTED, CustomTokens.PROFANITY.value)
 
     return text.strip()
 
@@ -254,10 +274,24 @@ class PreprocessArguments:
     do_create: bool = field(
         default=False, metadata={'help': 'Merge sponsor segments into single file'}
     )
+
     min_votes: int = field(
         default=0, metadata={'help': 'Minimum number of votes'})
     # Downvotes will make this negative.
     # 1 = At least one positive vote
+
+    min_date: str = field(
+        default='20/08/2021', metadata={'help': 'Only use submissions from after this date, defaults to the release of v3.0 (https://github.com/ajayyy/SponsorBlock/releases/tag/3.0)'})
+
+    categories: str = field(
+        default_factory=lambda: ['sponsor', 'selfpromo', 'interaction'],
+        metadata={
+            'nargs': '+',
+            'choices': ['intro', 'sponsor', 'interaction',
+                        'outro', 'selfpromo', 'preview',
+                        'poi_highlight', 'filler', 'music_offtopic']  # moreCategories
+        }
+    )
 
     do_transcribe: bool = field(
         default=False, metadata={'help': 'Get transcripts for videos'}
@@ -266,7 +300,7 @@ class PreprocessArguments:
         default=4, metadata={'help': 'Number of transcripts to download in parallel'})
 
     overwrite: bool = field(
-        default=False, metadata={'help': 'Overwrite training, testing and validation data, if present.'}
+        default=True, metadata={'help': 'Overwrite training, testing and validation data, if present.'}
     )
 
     do_generate: bool = field(
@@ -447,14 +481,26 @@ def main():
         preprocess_args.raw_data_dir, preprocess_args.raw_data_file)
 
     def get_rows():
+
+        latest_time = datetime.strptime(preprocess_args.min_date, '%d/%m/%Y')
+
         with open(raw_dataset_path, newline='') as csvfile:
             reader = csv.DictReader(csvfile)
+
             for line in reader:
-                if line['service'] != 'YouTube':
+                submitted_time = datetime.fromtimestamp(
+                    float(line['timeSubmitted'])/1e3)
+
+                if submitted_time < latest_time:
                     continue
 
+                if line['service'] != 'YouTube':
+                    continue
+                if len(line['videoID']) != 11:
+                    continue  # Invalid youtube video ID
+
                 # TODO add support for other categories and action types?
-                if line['category'] != 'sponsor':
+                if line['category'] not in preprocess_args.categories:
                     continue
                 if line['actionType'] != 'skip':
                     continue
@@ -462,9 +508,6 @@ def main():
                 # Ignore hidden items
                 if line['hidden'] == '1' or line['shadowHidden'] == '1':
                     continue
-
-                if len(line['videoID']) != 11:
-                    continue  # Invalid youtube video ID
 
                 # Skip those that aren't highly voted
                 line['votes'] = int(line['votes'])
@@ -494,6 +537,8 @@ def main():
         for row in data_rows:
             video_ids.add(row['videoID'])
 
+        # TODO first set - os.listdir and do rest
+
         print('Start transcribing')
         with tqdm(total=len(video_ids)) as progress:
             def on_job_complete(job):
@@ -517,21 +562,18 @@ def main():
     final_path = os.path.join(
         processed_args.processed_dir, processed_args.processed_file)
 
-    if os.path.exists(final_path) and not preprocess_args.do_create:
-        logging.info(f'{final_path} exists, opening file')
-        with open(final_path) as fp:
-            final_data = json.load(fp)
-    else:
+    if preprocess_args.do_create:
         print('Create final data')
 
         final_data = {}
 
         if data_rows is None:
             data_rows = get_rows()
+            # data_rows = itertools.islice(data_rows, 1000)  # TODO temp
 
         # TODO add progress bar
         # TODO parallelise?
-        for line in data_rows:
+        for index, line in enumerate(data_rows):
             video_id = line['videoID']
 
             if video_id not in final_data:
@@ -540,7 +582,10 @@ def main():
             segment_start = float(line['startTime'])
             segment_end = float(line['endTime'])
 
-            video_words = get_words(video_id, process=True)
+            video_words = get_words(video_id, process=False)
+            if not video_words:
+                continue
+
             segment_words = segment.extract_segment(
                 video_words, segment_start, segment_end)
 
@@ -552,7 +597,8 @@ def main():
             wps = len(segment_words)/duration if duration > 0 else 0
 
             if wps < preprocess_args.min_wps:
-                print('bad segment in', video_id, '| wps =', wps)
+                print(index, 'Skipping bad segment in',
+                      video_id, '| wps =', wps)
                 continue
 
             final_data[video_id].append({
@@ -580,10 +626,16 @@ def main():
         #     raw_dataset_path, final_path, preprocess_args.min_votes)
         # # TODO save metadata in final.json?
 
-    logging.info(f'Found {len(final_data)} videos')
+    elif os.path.exists(final_path):
+        # Already exists
+        logging.info(f'{final_path} exists, opening file')
+        with open(final_path) as fp:
+            final_data = json.load(fp)
+        logging.info(f'Found {len(final_data)} videos')
+    else:
+        return  # Do not continue
 
     # TODO shuffle final_data
-
     # if not os.path.exists(excess_path) or preprocess_args.overwrite
     # TODO use overwrite param
 
@@ -610,10 +662,8 @@ def main():
         write_mode = 'w' if preprocess_args.overwrite else 'a'
 
         get_all = preprocess_args.max_videos is None
-        if get_all:
-            total = len(final_data)
-        else:
-            total = preprocess_args.max_videos
+
+        total = len(final_data) if get_all else preprocess_args.max_videos
 
         index = 0
         data = final_data.items()
@@ -641,7 +691,7 @@ def main():
                 elif count_videos >= preprocess_args.max_videos:
                     break
 
-                words = get_words(video_id, False)
+                words = get_words(video_id, process=False)
                 if not words:
                     continue
 
@@ -662,34 +712,40 @@ def main():
                     progress.update()
 
                 for seg in segments:
-
-                    segment_text = ' '.join((x['text'] for x in seg))
-
-                    extracted_text = ''
-                    for p in extract_sponsors(seg):
-                        p_text = ' '.join(p)
-                        extracted_text += f'{CustomTokens.START_SPONSOR.value} {p_text} {CustomTokens.END_SPONSOR.value}. '
-
                     duration = segment.word_end(
                         seg[-1]) - segment.word_start(seg[0])
                     wps = len(seg)/duration if duration > 0 else 0
+
                     # Ignore segments with "not enough words" in the transcript
                     if wps < preprocess_args.min_wps:
                         continue
 
+                    segment_text = ' '.join((x['text'] for x in seg))
+                    extracted_segments = extract_sponsors(seg)
                     d = {
                         'video_index': index,
                         'video_id': video_id,
                         'text': clean_text(segment_text),
-                        'words_per_second': wps,
+                        'words_per_second': round(wps, 3),
                     }
 
-                    d['sponsor'] = bool(extracted_text)
-                    d['extracted'] = clean_text(
-                        extracted_text) if d['sponsor'] else CustomTokens.NO_SPONSOR.value
+                    if extracted_segments:
+                        extracted_texts = []
+                        for s in extracted_segments:
+                            w = ' '.join(s['words'])
+                            category = s['category'].upper()
 
-                    print(json.dumps(d), file=(
-                        positive if d['sponsor'] else negative))
+                            t = f"{CustomTokens.START_SEGMENT.value}_{category} {w} {CustomTokens.END_SEGMENT.value}_{category}"
+                            extracted_texts.append(t)
+
+                        extracted_text = '\n'.join(extracted_texts)
+
+                        d['extracted'] = clean_text(extracted_text)
+                        print(json.dumps(d), file=positive)
+
+                    else:
+                        d['extracted'] = CustomTokens.NO_SEGMENT.value
+                        print(json.dumps(d), file=negative)
 
     if preprocess_args.do_split:
         print('Splitting')

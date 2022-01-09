@@ -1,9 +1,8 @@
 from preprocess import load_datasets, DatasetArguments
-from predict import ClassifierArguments, SPONSOR_MATCH_RE, DEFAULT_TOKEN_PREFIX
-from shared import device, GeneralArguments, OutputArguments
-from model import ModelArguments
+from predict import ClassifierArguments, SPONSOR_MATCH_RE
+from shared import CustomTokens, device, GeneralArguments, OutputArguments
+from model import ModelArguments, get_model, get_tokenizer
 import transformers
-from model import get_model, get_tokenizer
 import logging
 import os
 import sys
@@ -22,7 +21,7 @@ from transformers.utils import check_min_version
 from transformers.utils.versions import require_version
 from sklearn.linear_model import LogisticRegression
 from sklearn.feature_extraction.text import TfidfVectorizer
-
+from utils import re_findall
 import re
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
@@ -117,7 +116,7 @@ class DataTrainingArguments:
         },
     )
     source_prefix: Optional[str] = field(
-        default=DEFAULT_TOKEN_PREFIX, metadata={
+        default=CustomTokens.EXTRACT_SEGMENTS_PREFIX.value, metadata={
             'help': 'A prefix to add before every source text (useful for T5 models).'}
     )
 
@@ -135,11 +134,11 @@ class SequenceTrainingArguments(OutputArguments, Seq2SeqTrainingArguments):
     num_train_epochs: float = field(
         default=1, metadata={'help': 'Total number of training epochs to perform.'})
 
-    save_steps: int = field(default=2500, metadata={
+    save_steps: int = field(default=5000, metadata={
                             'help': 'Save checkpoint every X updates steps.'})
-    eval_steps: int = field(default=2500, metadata={
+    eval_steps: int = field(default=5000, metadata={
                             'help': 'Run an evaluation every X steps.'})
-    logging_steps: int = field(default=2500, metadata={
+    logging_steps: int = field(default=5000, metadata={
                                'help': 'Log every X updates steps.'})
 
     skip_train_transformer: bool = field(default=False, metadata={
@@ -257,8 +256,8 @@ def main():
 
             ngram_range=(1, 2),  # best so far
             # max_features=8000  # remove for higher accuracy?
-            max_features=50000
-            # max_features=10000
+            # max_features=50000
+            max_features=10000
         )
 
         train_test_data = {
@@ -277,11 +276,12 @@ def main():
             dataset = raw_datasets[ds_type]
 
             for row in dataset:
-
                 # Get matches:
-                if row['sponsor']:
-                    matches = re.findall(SPONSOR_MATCH_RE, row['extracted'])
-                else:
+                matches = re_findall(SPONSOR_MATCH_RE, row['extracted'])
+
+                return  # TODO fix
+
+                if not matches:
                     matches = [row['text']]
 
                 for match in matches:

@@ -105,13 +105,13 @@ def calculate_metrics(labelled_words, predictions):
 
         if predicted_sponsor:
             # total_positive_time += duration
-            if word['sponsor']:  # Is actual sponsor
+            if word['category'] is not None:  # Is actual sponsor
                 metrics['true_positive'] += duration
             else:
                 metrics['false_positive'] += duration
         else:
             # total_negative_time += duration
-            if word['sponsor']:  # Is actual sponsor
+            if word['category'] is not None:  # Is actual sponsor
                 metrics['false_negative'] += duration
             else:
                 metrics['true_negative'] += duration
@@ -175,8 +175,6 @@ def main():
 
     with open(final_path) as fp:
         final_data = json.load(fp)
-
-    classifier, vectorizer = get_classifier_vectorizer(classifier_args)
 
     total_accuracy = 0
     total_precision = 0

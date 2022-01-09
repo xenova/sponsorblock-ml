@@ -1,4 +1,4 @@
-from transformers.trainer_utils import get_last_checkpoint
+from utils import re_findall
 from shared import OutputArguments
 from typing import Optional
 from segment import (
@@ -11,21 +11,22 @@ from segment import (
     SegmentationArguments
 )
 import preprocess
-import re
 from errors import TranscriptError
 from model import get_classifier_vectorizer
 from transformers import (
     AutoModelForSeq2SeqLM,
-    AutoTokenizer
+    AutoTokenizer,
+    HfArgumentParser
 )
+from transformers.trainer_utils import get_last_checkpoint
 from dataclasses import dataclass, field
-from transformers import HfArgumentParser
 from shared import device
 import logging
 
 
 def seconds_to_time(seconds):
-    fractional = str(round(seconds % 1, 3))[1:]
+    fractional = round(seconds % 1, 3)
+    fractional = '' if fractional == 0 else str(fractional)[1:]
     h, remainder = divmod(abs(int(seconds)), 3600)
     m, s = divmod(remainder, 60)
     return f"{'-' if seconds < 0 else ''}{h:02}:{m:02}:{s:02}{fractional}"
@@ -64,7 +65,7 @@ class PredictArguments(TrainingOutputArguments):
     )
 
 
-SPONSOR_MATCH_RE = fr'(?<={CustomTokens.START_SPONSOR.value})\s*(.*?)\s*(?={CustomTokens.END_SPONSOR.value}|$)'
+SPONSOR_MATCH_RE = fr'(?<={CustomTokens.START_SEGMENT.value})\s*_(?P<category>\S+)\s*(?P<text>.*?)\s*(?={CustomTokens.END_SEGMENT.value}|$)'
 
 MATCH_WINDOW = 25       # Increase for accuracy, but takes longer: O(n^3)
 MERGE_TIME_WITHIN = 8   # Merge predictions if they are within x seconds
@@ -97,10 +98,12 @@ class ClassifierArguments:
         default=0.5, metadata={'help': 'Remove all predictions whose classification probability is below this threshold.'})
 
 
-def filter_predictions(predictions, classifier, vectorizer, classifier_args):
+def filter_predictions(predictions, classifier_args):  # classifier, vectorizer,
     """Use classifier to filter predictions"""
     if not predictions:
         return predictions
+
+    classifier, vectorizer = get_classifier_vectorizer(classifier_args)
 
     transformed_segments = vectorizer.transform([
         preprocess.clean_text(' '.join([x['text'] for x in pred['words']]))
@@ -142,9 +145,7 @@ def predict(video_id, model, tokenizer, segmentation_args, words=None, classifie
             words, prediction['start'], prediction['end'])
 
     if classifier_args is not None:
-        classifier, vectorizer = get_classifier_vectorizer(classifier_args)
-        predictions = filter_predictions(
-            predictions, classifier, vectorizer, classifier_args)
+        predictions = filter_predictions(predictions, classifier_args)
 
     return predictions
 
@@ -166,13 +167,10 @@ def greedy_match(list, sublist):
     return best_i, best_j, best_k
 
 
-DEFAULT_TOKEN_PREFIX = 'summarize: '
-
-
 def predict_sponsor_text(text, model, tokenizer):
     """Given a body of text, predict the words which are part of the sponsor"""
     input_ids = tokenizer(
-        f'{DEFAULT_TOKEN_PREFIX}{text}', return_tensors='pt', truncation=True).input_ids.to(device())
+        f'{CustomTokens.EXTRACT_SEGMENTS_PREFIX.value} {text}', return_tensors='pt', truncation=True).input_ids.to(device())
 
     # Can't be longer than input length + SAFETY_TOKENS or model input dim
     max_out_len = min(len(input_ids[0]) + SAFETY_TOKENS, model.model_dim)
@@ -183,10 +181,11 @@ def predict_sponsor_text(text, model, tokenizer):
 
 def predict_sponsor_matches(text, model, tokenizer):
     sponsorship_text = predict_sponsor_text(text, model, tokenizer)
-    if CustomTokens.NO_SPONSOR.value in sponsorship_text:
+
+    if CustomTokens.NO_SEGMENT.value in sponsorship_text:
         return []
 
-    return re.findall(SPONSOR_MATCH_RE, sponsorship_text)
+    return re_findall(SPONSOR_MATCH_RE, sponsorship_text)
 
 
 def segments_to_prediction_times(segments, model, tokenizer):
@@ -202,7 +201,7 @@ def segments_to_prediction_times(segments, model, tokenizer):
         matches = predict_sponsor_matches(batch_text, model, tokenizer)
 
         for match in matches:
-            matched_text = match.split()
+            matched_text = match['text'].split()
             # TODO skip if too short
 
             i1, j1, k1 = greedy_match(
@@ -217,7 +216,8 @@ def segments_to_prediction_times(segments, model, tokenizer):
 
             predicted_time_ranges.append({
                 'start': word_start(extracted_words[0]),
-                'end': word_end(extracted_words[-1])
+                'end': word_end(extracted_words[-1]),
+                'category': match['category']
             })
 
     # Necessary to sort matches by start time
@@ -225,23 +225,29 @@ def segments_to_prediction_times(segments, model, tokenizer):
 
     # Merge overlapping predictions and sponsorships that are close together
     # Caused by model having max input size
-    last_end_time = -1
+
+    prev_prediction = None
+
     final_predicted_time_ranges = []
     for range in predicted_time_ranges:
         start_time = range['start']
         end_time = range['end']
 
-        if (start_time <= last_end_time <= end_time) or (last_end_time != -1 and start_time - last_end_time <= MERGE_TIME_WITHIN):
-            # Ending time of last segment is in this segment, so we extend last prediction range
+        if prev_prediction is not None and range['category'] == prev_prediction['category'] and (
+            start_time <= prev_prediction['end'] <= end_time or start_time -
+                prev_prediction['end'] <= MERGE_TIME_WITHIN
+        ):
+            # Ending time of last segment is in this segment or c, so we extend last prediction range
             final_predicted_time_ranges[-1]['end'] = end_time
 
         else:  # No overlap, is a new prediction
             final_predicted_time_ranges.append({
                 'start': start_time,
                 'end': end_time,
+                'category': range['category']
             })
 
-        last_end_time = end_time
+        prev_prediction = range
 
     return final_predicted_time_ranges
 
@@ -268,7 +274,7 @@ def main():
 
     predict_args.video_id = predict_args.video_id.strip()
     predictions = predict(predict_args.video_id, model, tokenizer,
-                          segmentation_args, classifier_args=classifier_args)
+                          segmentation_args)  # TODO add back , classifier_args=classifier_args
 
     video_url = f'https://www.youtube.com/watch?v={predict_args.video_id}'
     if not predictions:
@@ -282,7 +288,8 @@ def main():
               ' '.join([w['text'] for w in prediction['words']]), '"', sep='')
         print('Time:', seconds_to_time(
             prediction['start']), '-->', seconds_to_time(prediction['end']))
-        print('Probability:', prediction['probability'])
+        print('Probability:', prediction.get('probability'))
+        print('Category:', prediction.get('category'))
         print()
 
 
