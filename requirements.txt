@@ -4,6 +4,4 @@ youtube_transcript_api
 torch
 pandas
 numpy
-rouge-score
 sentencepiece
-
