@@ -99,25 +99,30 @@ def generate_segments(words, tokenizer, segmentation_args):
         current_segment_num_tokens = 0
         current_segment = []
         for word in segment:
-            if current_segment_num_tokens + word['num_tokens'] < max_q_size:
-                # Can add tokens to current segment
-                current_segment.append(word)
-                current_segment_num_tokens += word['num_tokens']
-            else:
+            new_seg = current_segment_num_tokens + word['num_tokens'] >= max_q_size
+            if new_seg:
                 # Adding this token would make it have too many tokens
                 # We save this batch and create new
                 second_pass_segments.append(current_segment.copy())
 
-                current_segment.append(word)
-                current_segment_num_tokens += word['num_tokens']
+            # Add tokens to current segment
+            current_segment.append(word)
+            current_segment_num_tokens += word['num_tokens']
 
+            if new_seg:
+                # Just created a new segment, so we remove until we only have buffer_size tokens
                 while current_segment_num_tokens > buffer_size and current_segment:
                     first_word = current_segment.pop(0)
                     current_segment_num_tokens -= first_word['num_tokens']
 
-        if current_segment:
+        if current_segment: # Add remaining segment
             second_pass_segments.append(current_segment.copy())
 
+    # Cleaning up, delete 'num_tokens' from each word
+    for segment in second_pass_segments:
+        for word in segment:  
+            word.pop('num_tokens', None)
+    
     return second_pass_segments
 
 
