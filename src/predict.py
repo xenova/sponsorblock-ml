@@ -23,14 +23,17 @@ from dataclasses import dataclass, field
 from shared import device
 import logging
 
+import re
 
-def seconds_to_time(seconds):
+def seconds_to_time(seconds, remove_leading_zeroes=False):
     fractional = round(seconds % 1, 3)
     fractional = '' if fractional == 0 else str(fractional)[1:]
     h, remainder = divmod(abs(int(seconds)), 3600)
     m, s = divmod(remainder, 60)
-    return f"{'-' if seconds < 0 else ''}{h:02}:{m:02}:{s:02}{fractional}"
-
+    hms = f'{h:02}:{m:02}:{s:02}'
+    if remove_leading_zeroes:
+        hms = re.sub(r'^0(?:0:0?)?', '', hms)
+    return f"{'-' if seconds < 0 else ''}{hms}{fractional}"
 
 @dataclass
 class TrainingOutputArguments:
@@ -136,7 +139,7 @@ def predict(video_id, model, tokenizer, segmentation_args, words=None, classifie
         segmentation_args
     )
 
-    predictions = segments_to_prediction_times(segments, model, tokenizer)
+    predictions = segments_to_predictions(segments, model, tokenizer)
 
     # Add words back to time_ranges
     for prediction in predictions:
@@ -144,8 +147,9 @@ def predict(video_id, model, tokenizer, segmentation_args, words=None, classifie
         prediction['words'] = extract_segment(
             words, prediction['start'], prediction['end'])
 
-    if classifier_args is not None:
-        predictions = filter_predictions(predictions, classifier_args)
+    # TODO add back
+    # if classifier_args is not None:
+    #     predictions = filter_predictions(predictions, classifier_args)
 
     return predictions
 
@@ -188,7 +192,7 @@ def predict_sponsor_matches(text, model, tokenizer):
     return re_findall(SPONSOR_MATCH_RE, sponsorship_text)
 
 
-def segments_to_prediction_times(segments, model, tokenizer):
+def segments_to_predictions(segments, model, tokenizer):
     predicted_time_ranges = []
 
     # TODO pass to model simultaneously, not in for loop
@@ -234,10 +238,11 @@ def segments_to_prediction_times(segments, model, tokenizer):
         end_time = range['end']
 
         if prev_prediction is not None and range['category'] == prev_prediction['category'] and (
-            start_time <= prev_prediction['end'] <= end_time or start_time -
-                prev_prediction['end'] <= MERGE_TIME_WITHIN
+            start_time <= prev_prediction['end'] <= end_time or \
+                start_time - prev_prediction['end'] <= MERGE_TIME_WITHIN
         ):
-            # Ending time of last segment is in this segment or c, so we extend last prediction range
+            # Ending time of last segment is in this segment or within the merge threshold,
+            # so we extend last prediction range
             final_predicted_time_ranges[-1]['end'] = end_time
 
         else:  # No overlap, is a new prediction
