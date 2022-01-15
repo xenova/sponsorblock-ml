@@ -6,8 +6,8 @@ from transformers import (
 )
 from preprocess import DatasetArguments, ProcessedArguments, get_words
 from model import get_classifier_vectorizer
-from shared import device
-from predict import ClassifierArguments, predict, filter_predictions, TrainingOutputArguments
+from shared import device, GeneralArguments
+from predict import ClassifierArguments, predict, add_predictions, TrainingOutputArguments
 from segment import word_start, word_end, SegmentationArguments, add_labels_to_words
 import pandas as pd
 from dataclasses import dataclass, field
@@ -150,10 +150,11 @@ def main():
         EvaluationArguments,
         ProcessedArguments,
         SegmentationArguments,
-        ClassifierArguments
+        ClassifierArguments,
+        GeneralArguments
     ))
 
-    evaluation_args, processed_args, segmentation_args, classifier_args = hf_parser.parse_args_into_dataclasses()
+    evaluation_args, processed_args, segmentation_args, classifier_args, _ = hf_parser.parse_args_into_dataclasses()
 
     model = AutoModelForSeq2SeqLM.from_pretrained(evaluation_args.model_path)
     model.to(device())
