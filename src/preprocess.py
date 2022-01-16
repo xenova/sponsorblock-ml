@@ -1,3 +1,6 @@
+from utils import jaccard
+from shared import START_SEGMENT_TEMPLATE, END_SEGMENT_TEMPLATE
+from functools import lru_cache
 from datetime import datetime
 import itertools
 from typing import Optional, List
@@ -13,12 +16,12 @@ import re
 import random
 import logging
 from youtube_transcript_api import YouTubeTranscriptApi
-from youtube_transcript_api._errors import CouldNotRetrieveTranscript, YouTubeRequestFailed
+from youtube_transcript_api._errors import CouldNotRetrieveTranscript, YouTubeRequestFailed, TooManyRequests
 import os
 import json
 import time
 import requests
-from utils import InterruptibleThreadPool, Job
+from utils import Task, InterruptibleTaskPool
 
 
 def find(s, ch):
@@ -106,87 +109,84 @@ def get_auto_words(transcript_list):
     return words
 
 
+def list_transcripts(video_id):
+    return YouTubeTranscriptApi.list_transcripts(video_id)
+
+
+@lru_cache(maxsize=16)
 def get_words(video_id, process=True, fallback=True, transcript_type='auto'):
     """Get parsed video transcript with caching system
     returns None if not processed yet and process is False
     """
     get_manual_if_fail = fallback and transcript_type == 'auto'
-    transcript_path = os.path.join(
+    transcript_path = os.path.join(  # TODO use relative path to this
         'transcripts', transcript_type, f'{video_id}.json')
     words = []
     try:
-        if os.path.exists(transcript_path):
+        if os.path.exists(transcript_path):  # Load from file
             with open(transcript_path) as fp:
-                wds = json.load(fp)
+                words = json.load(fp)
 
-            if not wds and get_manual_if_fail:
-                return get_words(video_id, process, fallback, 'manual')
-            return wds
+        elif process:
+            transcript_list = list_transcripts(video_id)
 
-        elif not process:
-            return None
+            if transcript_type == 'manual':
+                words = get_manual_words(transcript_list)
+            else:
+                words = get_auto_words(transcript_list)
 
-        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
-
-        if transcript_type == 'manual':
-            words = get_manual_words(transcript_list)
-        else:
-            words = get_auto_words(transcript_list)
-
-    except YouTubeRequestFailed as e:
+    except (TooManyRequests, YouTubeRequestFailed, requests.exceptions.ConnectionError) as e:  # Can retry
         print(e)
-        time.sleep(30)  # Timeout
+        time.sleep(10)  # Timeout
         return get_words(video_id, process, fallback, transcript_type)
 
     except CouldNotRetrieveTranscript:
-        if get_manual_if_fail:
-            print('fallback')
-            return get_words(video_id, process, fallback, 'manual')
-
-    except json.decoder.JSONDecodeError:
-        # Warning, unable to parse JSON
         pass
+    except json.decoder.JSONDecodeError:
+        print('JSONDecodeError for', video_id)
+        os.remove(transcript_path)  # Remove file and try again
+        return get_words(video_id, process, fallback, transcript_type)
 
+    # Even save empty
     with open(transcript_path, 'w') as fp:
         json.dump(words, fp)
+
+    if not words and get_manual_if_fail:
+        return get_words(video_id, process, fallback, 'manual')
 
     return words
 
 
 # TODO make min_sponsor_segment_length param
-def extract_sponsors(words, min_sponsor_segment_length=5):
-    if len(words) < min_sponsor_segment_length:
-        return []  # Force short phrases to not be sponsors
+def extract_sponsors(words, min_sponsor_segment_length=3):
+    if not words:
+        return []
 
     paragraphs = []
     current = []
     prev_category = None
-    for word in words:
-        if word['category'] is None:  # and not current:
-            continue  # Skip unimportant
 
-        if word['category'] == prev_category:
-            current.append(word['text'])
-        else:
-            paragraphs.append({
-                'words': current,
-                'category': prev_category,
-            })
-            current = []
+    i = 0
+    while i <= len(words):
+        unimportant = i == len(words) or words[i]['category'] is None
 
-        prev_category = word['category']
+        if unimportant or words[i]['category'] != prev_category:
+            if current:  # Save the current batch
+                paragraphs.append({
+                    'words': current,
+                    'category': current[-1]['category'],
+                })
 
-    if current and prev_category is not None:
-        paragraphs.append({
-            'words': current,
-            'category': prev_category,
-        })
+                current = []
+
+        if not unimportant:  # Some useful information to save
+            current.append(words[i])
+            prev_category = words[i]['category']
+
+        i += 1
 
     # Remove all too short:
-    paragraphs = list(filter(lambda x: len(
-        x['words']) >= min_sponsor_segment_length, paragraphs))
-
-    return paragraphs
+    return list(filter(lambda x: len(x['words']) >= min_sponsor_segment_length, paragraphs))
 
 
 def clean_text(text):
@@ -231,33 +231,27 @@ def clean_text(text):
     return text.strip()
 
 
-def remove_duplicate_sponsor_segments(sponsor_segments):
-    """Choose the best sponsor segment if overlapping with others"""
-
+def remove_duplicate_segments(segments):
     # Algorithm based on SponsorBlock algorithm
+    # https://blog.ajay.app/voting-and-pseudo-randomness-or-sponsorblock-or-youtube-sponsorship-segment-blocker
     # Find sponsors that are overlapping
-    similar = []
-    for i in sponsor_segments:
-        for j in sponsor_segments:
-            # Since we do pairwise, we only check one direction
-            if (j['start'] >= i['start'] and j['start'] <= i['end']):
-                similar.append([i, j])
 
-    # Within each group, choose the segment with the most votes.
-    processed = []
     best = []
-    for i in similar:
-        if i in processed:
-            continue
-        group = i
-        for j in similar:
-            if j[0] in group or j[1] in group:  # If either in, append both
-                group.append(j[0])
-                group.append(j[1])
-                processed.append(j)
+    for i in segments:
+        similar_segments = []
+        for j in segments:
+            if jaccard(i['start'], i['end'], j['start'], j['end']) > 0.1:  # Some overlap
+                similar_segments.append(j)
 
-        best.append(max(group, key=lambda item: (
-            item['votes'], item['reputation'], item['views'])))
+        if similar_segments:
+            best_similar_seg = max(similar_segments, key=lambda item: (
+                item['locked'],
+                item['votes'],
+                item['views'],
+                item['reputation']
+            ))
+            if best_similar_seg not in best:
+                best.append(best_similar_seg)
 
     return best
 
@@ -280,16 +274,25 @@ class PreprocessArguments:
     # Downvotes will make this negative.
     # 1 = At least one positive vote
 
-    min_date: str = field(
-        default='20/08/2021', metadata={'help': 'Only use submissions from after this date, defaults to the release of v3.0 (https://github.com/ajayyy/SponsorBlock/releases/tag/3.0)'})
+    min_views: int = field(
+        default=5, metadata={'help': 'Minimum number of views a segment must have to be considered. 0 = show all'})
 
+    min_date: str = field(
+        # release of v2.0 (https://github.com/ajayyy/SponsorBlock/releases/tag/2.0)
+        default='08/06/2020',
+        # default='20/08/2021', # release of v3.0 (https://github.com/ajayyy/SponsorBlock/releases/tag/3.0)
+        # default='01/10/2020', # No more autovote
+        metadata={'help': 'Only use submissions from after this date'})
+
+    # TODO move?
     categories: str = field(
         default_factory=lambda: ['sponsor', 'selfpromo', 'interaction'],
         metadata={
             'nargs': '+',
-            'choices': ['intro', 'sponsor', 'interaction',
-                        'outro', 'selfpromo', 'preview',
-                        'poi_highlight', 'filler', 'music_offtopic']  # moreCategories
+            'choices': ['intro', 'sponsor', 'interaction']
+            # 'outro', 'selfpromo', 'preview',
+            # 'poi_highlight', 'filler', 'music_offtopic',
+            # 'moreCategories'
         }
     )
 
@@ -345,7 +348,7 @@ class PreprocessArguments:
     )
 
     min_wps: float = field(
-        default=0.4, metadata={'help': 'Ignore videos with not enough words spoken per second. This is usually indicitive of video whose captions aren\'t English.'})
+        default=1.5, metadata={'help': 'Ignore videos with not enough words spoken per second. This is usually indicitive of video whose captions aren\'t English.'})
     # 0.1 ~ 1%
     # 0.4 ~ 2.5%
     # 0.9 ~ 5%
@@ -357,7 +360,7 @@ MIRRORS = [
     'https://sb-mirror.mchang.xyz/sponsorTimes.csv',  # 5 minute delay
     'https://sb.ltn.fi/database/sponsorTimes.csv',  # 5 minute delay
 ]
-# TODO only download latest (updates/changes)
+# TODO only download latest updates/changes
 
 
 def download_file(url, filename):
@@ -480,7 +483,18 @@ def main():
     raw_dataset_path = os.path.join(
         preprocess_args.raw_data_dir, preprocess_args.raw_data_file)
 
-    def get_rows():
+    if preprocess_args.update_database:
+        print('Updating database')
+        for mirror in MIRRORS:
+            print('Downloading from', mirror)
+            if download_file(mirror, raw_dataset_path):
+                break
+            print('Failed, trying next')
+
+    @lru_cache
+    def read_db():  # TODO save as file
+        print('Parsing raw database')
+        db = {}
 
         latest_time = datetime.strptime(preprocess_args.min_date, '%d/%m/%Y')
 
@@ -488,10 +502,9 @@ def main():
             reader = csv.DictReader(csvfile)
 
             for line in reader:
-                submitted_time = datetime.fromtimestamp(
-                    float(line['timeSubmitted'])/1e3)
+                submission_time = float(line['timeSubmitted'])/1e3
 
-                if submitted_time < latest_time:
+                if datetime.fromtimestamp(submission_time) < latest_time:
                     continue
 
                 if line['service'] != 'YouTube':
@@ -499,7 +512,6 @@ def main():
                 if len(line['videoID']) != 11:
                     continue  # Invalid youtube video ID
 
-                # TODO add support for other categories and action types?
                 if line['category'] not in preprocess_args.categories:
                     continue
                 if line['actionType'] != 'skip':
@@ -511,53 +523,72 @@ def main():
 
                 # Skip those that aren't highly voted
                 line['votes'] = int(line['votes'])
-                # incorrect_votes = int(line['incorrectVotes'])
-
                 if line['votes'] < preprocess_args.min_votes:
                     continue
 
-                yield line
+                locked = line['locked'] == '1'
 
-    if preprocess_args.update_database:
-        print('Updating database')
-        for mirror in MIRRORS:
-            print('Downloading from', mirror)
-            if download_file(mirror, raw_dataset_path):
-                break
-            print('Failed, trying next')
+                # Skip segments with low views (i.e., not really reviewed)
+                # Always include segments locked by VIPs, regardless of view count
+                line['views'] = int(line['views'])
+                if not locked and line['views'] < preprocess_args.min_views:
+                    continue
+
+                if line['videoID'] not in db:
+                    db[line['videoID']] = []
+
+                db[line['videoID']].append({
+                    'uuid': line['UUID'],
+                    'start': float(line['startTime']),
+                    'end': float(line['endTime']),
+                    'votes': line['votes'],
+                    'locked': locked,
+                    'views': line['views'],
+                    'submission_time': submission_time,
+                    'reputation': line['reputation'],
+                    'category': line['category'],
+                    'action': line['actionType'],
+                })
+
+        num_segments = 0
+
+        # Remove duplicate sponsor segments by choosing best (most votes)
+        print('Remove duplicate segments')
+        for key in db:
+            db[key] = remove_duplicate_segments(db[key])
+            num_segments += len(db[key])
+        print('Saved', len(db), 'videos and', num_segments, 'segments')
+
+        return db
 
     # 'videoID', 'startTime', 'endTime', 'votes', 'locked', 'incorrectVotes', 'UUID',
     # 'userID', 'timeSubmitted', 'views', 'category', 'actionType', 'service', 'videoDuration',
     # 'hidden', 'reputation', 'shadowHidden', 'hashedVideoID', 'userAgent', 'description'
-    data_rows = None
+    parsed_database = None
     if preprocess_args.do_transcribe:
         print('Collecting videos')
-        video_ids = set()
-        data_rows = get_rows()
-        for row in data_rows:
-            video_ids.add(row['videoID'])
+        parsed_database = read_db()
 
-        # TODO first set - os.listdir and do rest
+        # Remove transcripts already processed
+        finished = set(os.listdir('transcripts/auto/') +
+                       os.listdir('transcripts/manual/'))
+        finished = set([x.split('.')[0] for x in finished])
 
-        print('Start transcribing')
+        video_ids = list(parsed_database.keys() - finished)
+
+        # Create tasks generator
+        tasks = (
+            Task(get_words, video_id)
+            for video_id in video_ids
+        )
+
+        print('start')
         with tqdm(total=len(video_ids)) as progress:
-            def on_job_complete(job):
-                progress.set_description(f'Processed {job.video_id}')
+            def callback(task):
+                progress.set_description(f'Processing {task.args[0]}')
                 progress.update()
 
-            pool = InterruptibleThreadPool(
-                preprocess_args.num_jobs, on_job_complete=on_job_complete)
-
-            print('Adding jobs to pool')
-            for video_id in video_ids:
-                job = Job(get_words, video_id)
-                job.video_id = video_id
-                pool.add_job(job)
-
-            print('Start processing')
-            pool.run()
-
-        print('Finished transcribing')
+            InterruptibleTaskPool(tasks, preprocess_args.num_jobs, callback).start()
 
     final_path = os.path.join(
         processed_args.processed_dir, processed_args.processed_file)
@@ -567,56 +598,42 @@ def main():
 
         final_data = {}
 
-        if data_rows is None:
-            data_rows = get_rows()
-            # data_rows = itertools.islice(data_rows, 1000)  # TODO temp
+        parsed_database = read_db()
 
         # TODO add progress bar
         # TODO parallelise?
-        for index, line in enumerate(data_rows):
-            video_id = line['videoID']
+        with tqdm(total=len(parsed_database)) as progress:
+            for index, (video_id, segments) in enumerate(parsed_database.items()):
 
-            if video_id not in final_data:
+                if preprocess_args.max_videos is not None and index >= preprocess_args.max_videos:
+                    break
+                progress.set_description(f'Processing {video_id}')
+                progress.update()
+
                 final_data[video_id] = []
 
-            segment_start = float(line['startTime'])
-            segment_end = float(line['endTime'])
+                video_words = get_words(video_id, process=False)
+                if not video_words:
+                    continue
 
-            video_words = get_words(video_id, process=False)
-            if not video_words:
-                continue
+                for seg in segments:  # Only add segments with high enough wps
+                    segment_words = segment.extract_segment(
+                        video_words, seg['start'], seg['end'])
 
-            segment_words = segment.extract_segment(
-                video_words, segment_start, segment_end)
+                    if len(segment_words) <= 1:
+                        continue  # Useless to add segment since no words
 
-            if len(segment_words) <= 1:
-                continue  # Useless to add segment since no words
+                    # duration = segment.word_end(segment_words[-1]) - segment.word_start(segment_words[0])
+                    duration = seg['end'] - seg['start']
+                    wps = len(segment_words)/duration if duration > 0 else 0
 
-            # duration = segment.word_end(segment_words[-1]) - segment.word_start(segment_words[0])
-            duration = segment_end - segment_start
-            wps = len(segment_words)/duration if duration > 0 else 0
-
-            if wps < preprocess_args.min_wps:
-                print(index, 'Skipping bad segment in',
-                      video_id, '| wps =', wps)
-                continue
-
-            final_data[video_id].append({
-                'start': segment_start,
-                'end': segment_end,
-                'votes': line['votes'],
-                'locked': line['locked'] == '1',
-                'views': line['views'],
-                'reputation': line['reputation'],
-                'category': line['category'],
-                'action': line['actionType'],
-                'uuid': line['UUID'],
-            })
-
-        # Remove duplicate sponsor segments by choosing best (most votes)
-        for key in final_data:
-            final_data[key] = remove_duplicate_sponsor_segments(
-                final_data[key])
+                    # print(video_id, wps)
+                    if wps < preprocess_args.min_wps:
+                        # Skip sponsor segments without many words
+                        # e.g. music ads with some words on each side
+                        # progress.set_description(f'Skipping bad segment in {video_id} (wps={wps})')
+                        continue
+                    final_data[video_id].append(seg)
 
         # Save data
         with open(final_path, 'w') as fp:
@@ -656,8 +673,9 @@ def main():
 
         tokenizer = get_tokenizer(model_args)
 
-        count_videos = 0
-        count_segments = 0  # TODO
+        # TODO
+        # count_videos = 0
+        # count_segments = 0 
 
         write_mode = 'w' if preprocess_args.overwrite else 'a'
 
@@ -682,14 +700,14 @@ def main():
                 open(negative_file, write_mode, encoding='utf-8') as negative, \
                 tqdm(total=total) as progress:
 
-            for video_id, sponsor_segments in data:
+            for ind, (video_id, sponsor_segments) in enumerate(data):
                 index += 1  # TODO FIX index + incrementing
-                progress.set_description(f'Processing {video_id}')
 
-                if get_all:
-                    progress.update()
-                elif count_videos >= preprocess_args.max_videos:
+                if preprocess_args.max_videos is not None and ind >= preprocess_args.max_videos:
                     break
+
+                progress.set_description(f'Processing {video_id}')
+                progress.update()
 
                 words = get_words(video_id, process=False)
                 if not words:
@@ -707,16 +725,13 @@ def main():
                 if not segments:
                     continue
 
-                count_videos += 1
-                if not get_all:
-                    progress.update()
-
                 for seg in segments:
                     duration = segment.word_end(
                         seg[-1]) - segment.word_start(seg[0])
                     wps = len(seg)/duration if duration > 0 else 0
 
                     # Ignore segments with "not enough words" in the transcript
+                    # Must do here since this includes non-sponsor segments
                     if wps < preprocess_args.min_wps:
                         continue
 
@@ -732,13 +747,13 @@ def main():
                     if extracted_segments:
                         extracted_texts = []
                         for s in extracted_segments:
-                            w = ' '.join(s['words'])
+                            w = ' '.join([q['text'] for q in s['words']])
                             category = s['category'].upper()
+                            extracted_texts.append(
+                                f"{START_SEGMENT_TEMPLATE.format(category)} {w} {END_SEGMENT_TEMPLATE.format(category)}")
 
-                            t = f"{CustomTokens.START_SEGMENT.value}_{category} {w} {CustomTokens.END_SEGMENT.value}_{category}"
-                            extracted_texts.append(t)
-
-                        extracted_text = '\n'.join(extracted_texts)
+                        extracted_text = f' {CustomTokens.BETWEEN_SEGMENTS.value} '.join(
+                            extracted_texts)
 
                         d['extracted'] = clean_text(extracted_text)
                         print(json.dumps(d), file=positive)
