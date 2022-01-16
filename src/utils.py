@@ -173,3 +173,10 @@ class InterruptibleTaskPool:
             sleep(.1)
             for p in procs:
                 logger.info(f'Process status: {p}')
+
+
+def jaccard(x1, x2, y1, y2):
+    # Calculate jaccard index
+    intersection = max(0, min(x2, y2)-max(x1, y1))
+    filled_union = max(x2, y2) - min(x1, y1)
+    return intersection/filled_union if filled_union > 0 else 0
