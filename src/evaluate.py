@@ -41,12 +41,7 @@ class EvaluationArguments(TrainingOutputArguments):
         }
     )
 
-
-def jaccard(x1, x2, y1, y2):
-    # Calculate jaccard index
-    intersection = max(0, min(x2, y2)-max(x1, y1))
-    filled_union = max(x2, y2) - min(x1, y1)
-    return intersection/filled_union
+from utils import jaccard
 
 
 def attach_predictions_to_sponsor_segments(predictions, sponsor_segments):
