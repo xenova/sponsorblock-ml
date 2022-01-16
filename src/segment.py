@@ -127,21 +127,27 @@ def generate_segments(words, tokenizer, segmentation_args):
 
 
 def extract_segment(words, start, end, map_function=None):
-    """Extract a segment of words that are between (inclusive) the start and end points"""
-    segment_words = []
+    """Extracts all words with time in [start, end]"""
+    
+    a = binary_search(words, 0, len(words), start, True)
+    b = min(binary_search(words, 0, len(words), end , False) + 1, len(words))
 
-    if start > end:
-        return segment_words
+    to_transform = map_function is not None and callable(map_function)
+    
+    return [
+        map_function(words[i]) if to_transform else words[i] for i in range(a, b)
+    ]
 
-    # TODO change to binary search
-    for w in words:  # Assumes words are sorted
-        if word_end(w) < start:
-            continue  # Ignore
-        if word_start(w) > end:
-            break  # Done with range
-        if map_function is not None and callable(map_function):
-            w = map_function(w)
+# Binary search to get first index of word whose start/end time is greater/less than some value
+def binary_search(words, start_index, end_index, time, below):
+    if start_index >= end_index:
+        return end_index
+    
+    middle_index = (start_index + end_index ) // 2
 
-        segment_words.append(w)
+    middle_time = word_start(words[middle_index]) if below else word_end(words[middle_index])
 
-    return segment_words
+    if time <= middle_time:
+        return binary_search(words, start_index, middle_index, time, below)
+    else:
+        return binary_search(words, middle_index + 1, end_index, time, below)
