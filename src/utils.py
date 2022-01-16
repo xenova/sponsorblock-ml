@@ -27,7 +27,6 @@ class Task:
         return self.function(*self.args, **self.kwargs)
 
 
-
 class CallbackGenerator:
     def __init__(self, generator, callback):
         self.generator = generator
@@ -40,7 +39,6 @@ class CallbackGenerator:
                 yield t
         else:
             yield from self.generator
-
 
 
 def start_worker(q: JoinableQueue, stop_event: Event):  # TODO make class?
@@ -63,12 +61,13 @@ def start_worker(q: JoinableQueue, stop_event: Event):  # TODO make class?
             break
 
         try:
-            task.run() # Do the task
-        except: # Will also catch KeyboardInterrupt
+            task.run()  # Do the task
+        except:  # Will also catch KeyboardInterrupt
             logger.exception(f'Failed to process task {task}', )
             # Can implement some kind of retry handling here
         finally:
             q.task_done()
+
 
 class InterruptibleTaskPool:
 
@@ -97,7 +96,6 @@ class InterruptibleTaskPool:
         # This is a process-safe version of the 'panic' variable shown above
         self.stop_event = Event()
 
-
         # n_workers: Start this many processes
         # max_queue_size: If queue exceeds this size, block when putting items on the queue
         # grace_period: Send SIGINT to processes if they don't exit within this time after SIGINT/SIGTERM
@@ -106,15 +104,12 @@ class InterruptibleTaskPool:
         # self.on_task_complete = on_task_complete
         # self.raise_after_interrupt = raise_after_interrupt
 
-
     def __enter__(self):
         self.start()
         return self
 
     def __exit__(self, exc_type, exc_value, exc_traceback):
         pass
-
-
 
     def start(self) -> None:
         def handler(signalname):
