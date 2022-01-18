@@ -1,3 +1,4 @@
+from shared import START_SEGMENT_TEMPLATE, END_SEGMENT_TEMPLATE
 from utils import re_findall
 from shared import OutputArguments
 from typing import Optional
@@ -25,6 +26,7 @@ import logging
 
 import re
 
+
 def seconds_to_time(seconds, remove_leading_zeroes=False):
     fractional = round(seconds % 1, 3)
     fractional = '' if fractional == 0 else str(fractional)[1:]
@@ -34,6 +36,7 @@ def seconds_to_time(seconds, remove_leading_zeroes=False):
     if remove_leading_zeroes:
         hms = re.sub(r'^0(?:0:0?)?', '', hms)
     return f"{'-' if seconds < 0 else ''}{hms}{fractional}"
+
 
 @dataclass
 class TrainingOutputArguments:
@@ -68,13 +71,15 @@ class PredictArguments(TrainingOutputArguments):
     )
 
 
-SPONSOR_MATCH_RE = fr'(?<={CustomTokens.START_SEGMENT.value})\s*_(?P<category>\S+)\s*(?P<text>.*?)\s*(?={CustomTokens.END_SEGMENT.value}|$)'
+_SEGMENT_START = START_SEGMENT_TEMPLATE.format(r'(?P<category>\w+)')
+_SEGMENT_END = END_SEGMENT_TEMPLATE.format(r'\w+')
+SEGMENT_MATCH_RE = fr'{_SEGMENT_START}\s*(?P<text>.*?)\s*(?:{_SEGMENT_END}|$)'
 
 MATCH_WINDOW = 25       # Increase for accuracy, but takes longer: O(n^3)
 MERGE_TIME_WITHIN = 8   # Merge predictions if they are within x seconds
 
 
-@dataclass
+@dataclass(frozen=True, eq=True)
 class ClassifierArguments:
     classifier_dir: Optional[str] = field(
         default='classifiers',
@@ -101,7 +106,7 @@ class ClassifierArguments:
         default=0.5, metadata={'help': 'Remove all predictions whose classification probability is below this threshold.'})
 
 
-def filter_predictions(predictions, classifier_args):  # classifier, vectorizer,
+def add_predictions(predictions, classifier_args):  # classifier, vectorizer,
     """Use classifier to filter predictions"""
     if not predictions:
         return predictions
@@ -114,14 +119,34 @@ def filter_predictions(predictions, classifier_args):  # classifier, vectorizer,
     ])
     probabilities = classifier.predict_proba(transformed_segments)
 
+    # Transformer sometimes says segment is of another category, so we
+    # update category and probabilities if classifier is confident it is another category
     filtered_predictions = []
-    for prediction, probability in zip(predictions, probabilities):
-        prediction['probability'] = probability[1]
+    for prediction, probabilities in zip(predictions, probabilities):
+        predicted_probabilities = {k: v for k,
+                                   v in zip(CATEGORIES, probabilities)}
 
-        if prediction['probability'] >= classifier_args.min_probability:
-            filtered_predictions.append(prediction)
-        # else:
-            # print('removing segment', prediction)
+        # Get best category + probability
+        classifier_category = max(
+            predicted_probabilities, key=predicted_probabilities.get)
+        classifier_probability = predicted_probabilities[classifier_category]
+
+        if classifier_category is None and classifier_probability > classifier_args.min_probability:
+            continue  # Ignore
+
+        if classifier_category is not None and classifier_probability > 0.5:  # TODO make param
+            # Confident enough to overrule, so we update category
+            prediction['category'] = classifier_category
+
+        prediction['probability'] = predicted_probabilities[prediction['category']]
+
+        # TODO add probabilities, but remove None and normalise rest
+        prediction['probabilities'] = predicted_probabilities
+
+        # if prediction['probability'] < classifier_args.min_probability:
+        #     continue
+
+        filtered_predictions.append(prediction)
 
     return filtered_predictions
 
@@ -140,7 +165,6 @@ def predict(video_id, model, tokenizer, segmentation_args, words=None, classifie
     )
 
     predictions = segments_to_predictions(segments, model, tokenizer)
-
     # Add words back to time_ranges
     for prediction in predictions:
         # Stores words in the range
@@ -148,8 +172,8 @@ def predict(video_id, model, tokenizer, segmentation_args, words=None, classifie
             words, prediction['start'], prediction['end'])
 
     # TODO add back
-    # if classifier_args is not None:
-    #     predictions = filter_predictions(predictions, classifier_args)
+    if classifier_args is not None:
+        predictions = add_predictions(predictions, classifier_args)
 
     return predictions
 
@@ -171,6 +195,9 @@ def greedy_match(list, sublist):
     return best_i, best_j, best_k
 
 
+CATEGORIES = [None, 'SPONSOR', 'SELFPROMO', 'INTERACTION']
+
+
 def predict_sponsor_text(text, model, tokenizer):
     """Given a body of text, predict the words which are part of the sponsor"""
     input_ids = tokenizer(
@@ -189,7 +216,7 @@ def predict_sponsor_matches(text, model, tokenizer):
     if CustomTokens.NO_SEGMENT.value in sponsorship_text:
         return []
 
-    return re_findall(SPONSOR_MATCH_RE, sponsorship_text)
+    return re_findall(SEGMENT_MATCH_RE, sponsorship_text)
 
 
 def segments_to_predictions(segments, model, tokenizer):
@@ -237,12 +264,11 @@ def segments_to_predictions(segments, model, tokenizer):
         start_time = range['start']
         end_time = range['end']
 
-        if prev_prediction is not None and range['category'] == prev_prediction['category'] and (
-            start_time <= prev_prediction['end'] <= end_time or \
-                start_time - prev_prediction['end'] <= MERGE_TIME_WITHIN
-        ):
-            # Ending time of last segment is in this segment or within the merge threshold,
-            # so we extend last prediction range
+        if prev_prediction is not None and \
+                (start_time <= prev_prediction['end'] <= end_time or    # Merge overlapping segments
+                    (range['category'] == prev_prediction['category']   # Merge disconnected segments if same category and within threshold
+                        and start_time - prev_prediction['end'] <= MERGE_TIME_WITHIN)):
+            # Extend last prediction range
             final_predicted_time_ranges[-1]['end'] = end_time
 
         else:  # No overlap, is a new prediction
@@ -279,7 +305,7 @@ def main():
 
     predict_args.video_id = predict_args.video_id.strip()
     predictions = predict(predict_args.video_id, model, tokenizer,
-                          segmentation_args)  # TODO add back , classifier_args=classifier_args
+                          segmentation_args, classifier_args=classifier_args)
 
     video_url = f'https://www.youtube.com/watch?v={predict_args.video_id}'
     if not predictions:
@@ -292,7 +318,7 @@ def main():
         print('Text: "',
               ' '.join([w['text'] for w in prediction['words']]), '"', sep='')
         print('Time:', seconds_to_time(
-            prediction['start']), '-->', seconds_to_time(prediction['end']))
+            prediction['start']), '\u2192', seconds_to_time(prediction['end']))
         print('Probability:', prediction.get('probability'))
         print('Category:', prediction.get('category'))
         print()
