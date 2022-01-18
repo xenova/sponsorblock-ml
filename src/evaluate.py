@@ -6,9 +6,8 @@ from transformers import (
     HfArgumentParser
 )
 from preprocess import DatasetArguments, ProcessedArguments, get_words
-from model import get_classifier_vectorizer
 from shared import device, GeneralArguments
-from predict import ClassifierArguments, predict, add_predictions, TrainingOutputArguments
+from predict import ClassifierArguments, predict, TrainingOutputArguments
 from segment import word_start, word_end, SegmentationArguments, add_labels_to_words
 import pandas as pd
 from dataclasses import dataclass, field
@@ -176,7 +175,6 @@ def main():
     total_recall = 0
     total_fscore = 0
 
-    count = 0
     out_metrics = []
 
     try:
@@ -188,8 +186,6 @@ def main():
                 words = get_words(video_id)
                 if not words:
                     continue
-
-                count += 1
 
                 # Make predictions
                 predictions = predict(video_id, model, tokenizer,
@@ -207,10 +203,10 @@ def main():
                 total_fscore += met['f-score']
 
                 progress.set_postfix({
-                    'accuracy': total_accuracy/count,
-                    'precision':  total_precision/count,
-                    'recall':  total_recall/count,
-                    'f-score': total_fscore/count
+                    'accuracy': total_accuracy/len(out_metrics),
+                    'precision':  total_precision/len(out_metrics),
+                    'recall':  total_recall/len(out_metrics),
+                    'f-score': total_fscore/len(out_metrics)
                 })
 
                 labelled_predicted_segments = attach_predictions_to_sponsor_segments(
