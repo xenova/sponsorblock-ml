@@ -302,9 +302,9 @@ class PreprocessArguments:
     num_jobs: int = field(
         default=4, metadata={'help': 'Number of transcripts to download in parallel'})
 
-    overwrite: bool = field(
-        default=True, metadata={'help': 'Overwrite training, testing and validation data, if present.'}
-    )
+    # append: bool = field(
+    #     default=False, metadata={'help': 'Append to training, testing and validation data, if present.'}
+    # )
 
     do_generate: bool = field(
         default=False, metadata={'help': 'Generate labelled data.'}
@@ -325,8 +325,8 @@ class PreprocessArguments:
     valid_split: float = field(
         default=0.05, metadata={'help': 'Ratio of validation data. Value between 0 and 1.'})
 
-    skip_videos: int = field(default=None, metadata={
-        'help': 'Number of videos to skip. Set this to the latest video index to append to the current file'})
+    start_index: int = field(default=None, metadata={
+        'help': 'Video to start at.'})
 
     max_videos: int = field(default=None, metadata={
         'help': 'Maximum number of videos to preprocess.'})
@@ -588,7 +588,8 @@ def main():
                 progress.set_description(f'Processing {task.args[0]}')
                 progress.update()
 
-            InterruptibleTaskPool(tasks, preprocess_args.num_jobs, callback).start()
+            InterruptibleTaskPool(
+                tasks, preprocess_args.num_jobs, callback).start()
 
     final_path = os.path.join(
         processed_args.processed_dir, processed_args.processed_file)
@@ -675,36 +676,20 @@ def main():
 
         # TODO
         # count_videos = 0
-        # count_segments = 0 
+        # count_segments = 0
 
-        write_mode = 'w' if preprocess_args.overwrite else 'a'
-
-        get_all = preprocess_args.max_videos is None
-
-        total = len(final_data) if get_all else preprocess_args.max_videos
-
-        index = 0
         data = final_data.items()
-        if preprocess_args.skip_videos is not None:
-            print('Skipping first', preprocess_args.skip_videos, 'videos')
-            data = itertools.islice(data, preprocess_args.skip_videos, None)
-            index = preprocess_args.skip_videos
 
-            if get_all:
-                total = max(0, total - preprocess_args.skip_videos)
-            else:
-                total = min(len(final_data) -
-                            preprocess_args.skip_videos, total)
+        start_index = preprocess_args.start_index or 0
+        end_index = (preprocess_args.max_videos or len(data)) + start_index
 
-        with open(positive_file, write_mode, encoding='utf-8') as positive, \
-                open(negative_file, write_mode, encoding='utf-8') as negative, \
-                tqdm(total=total) as progress:
+        data = list(itertools.islice(data, start_index, end_index))
 
-            for ind, (video_id, sponsor_segments) in enumerate(data):
-                index += 1  # TODO FIX index + incrementing
+        with open(positive_file, 'a', encoding='utf-8') as positive, \
+                open(negative_file, 'a', encoding='utf-8') as negative, \
+                tqdm(data) as progress:
 
-                if preprocess_args.max_videos is not None and ind >= preprocess_args.max_videos:
-                    break
+            for offset, (video_id, sponsor_segments) in enumerate(data):
 
                 progress.set_description(f'Processing {video_id}')
                 progress.update()
@@ -735,22 +720,22 @@ def main():
                     if wps < preprocess_args.min_wps:
                         continue
 
-                    segment_text = ' '.join((x['text'] for x in seg))
-                    extracted_segments = extract_sponsors(seg)
                     d = {
-                        'video_index': index,
+                        'video_index': offset + start_index,
                         'video_id': video_id,
-                        'text': clean_text(segment_text),
+                        'text': clean_text(' '.join(x['text'] for x in seg)),
                         'words_per_second': round(wps, 3),
                     }
 
+                    extracted_segments = extract_sponsors(seg)
                     if extracted_segments:
                         extracted_texts = []
                         for s in extracted_segments:
-                            w = ' '.join([q['text'] for q in s['words']])
+                            w = ' '.join(q['text'] for q in s['words'])
                             category = s['category'].upper()
                             extracted_texts.append(
-                                f"{START_SEGMENT_TEMPLATE.format(category)} {w} {END_SEGMENT_TEMPLATE.format(category)}")
+                                f'{START_SEGMENT_TEMPLATE.format(category)} {w} {END_SEGMENT_TEMPLATE.format(category)}'
+                            )
 
                         extracted_text = f' {CustomTokens.BETWEEN_SEGMENTS.value} '.join(
                             extracted_texts)
