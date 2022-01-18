@@ -106,7 +106,7 @@ class ClassifierArguments:
         default=0.5, metadata={'help': 'Remove all predictions whose classification probability is below this threshold.'})
 
 
-def add_predictions(predictions, classifier_args):  # classifier, vectorizer,
+def filter_and_add_probabilities(predictions, classifier_args):  # classifier, vectorizer,
     """Use classifier to filter predictions"""
     if not predictions:
         return predictions
@@ -134,8 +134,10 @@ def add_predictions(predictions, classifier_args):  # classifier, vectorizer,
         if classifier_category is None and classifier_probability > classifier_args.min_probability:
             continue  # Ignore
 
-        if classifier_category is not None and classifier_probability > 0.5:  # TODO make param
-            # Confident enough to overrule, so we update category
+        if (prediction['category'] not in predicted_probabilities) \
+            or (classifier_category is not None and classifier_probability > 0.5):  # TODO make param
+            # Unknown category or we are confident enough to overrule,
+            # so change category to what was predicted by classifier
             prediction['category'] = classifier_category
 
         prediction['probability'] = predicted_probabilities[prediction['category']]
@@ -173,7 +175,7 @@ def predict(video_id, model, tokenizer, segmentation_args, words=None, classifie
 
     # TODO add back
     if classifier_args is not None:
-        predictions = add_predictions(predictions, classifier_args)
+        predictions = filter_and_add_probabilities(predictions, classifier_args)
 
     return predictions
 
