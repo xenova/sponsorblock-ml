@@ -1,3 +1,4 @@
+from utils import jaccard
 from datasets import load_dataset
 from transformers import (
     AutoModelForSeq2SeqLM,
@@ -40,8 +41,6 @@ class EvaluationArguments(TrainingOutputArguments):
             'help': 'Save metrics to output file'
         }
     )
-
-from utils import jaccard
 
 
 def attach_predictions_to_sponsor_segments(predictions, sponsor_segments):
