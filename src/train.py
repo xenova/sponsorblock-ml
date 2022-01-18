@@ -1,7 +1,7 @@
 from preprocess import load_datasets, DatasetArguments
-from predict import ClassifierArguments, SPONSOR_MATCH_RE
+from predict import ClassifierArguments, SEGMENT_MATCH_RE, CATEGORIES
 from shared import CustomTokens, device, GeneralArguments, OutputArguments
-from model import ModelArguments, get_model, get_tokenizer
+from model import ModelArguments
 import transformers
 import logging
 import os
@@ -14,15 +14,17 @@ from transformers import (
     DataCollatorForSeq2Seq,
     HfArgumentParser,
     Seq2SeqTrainer,
-    Seq2SeqTrainingArguments
+    Seq2SeqTrainingArguments,
+    AutoTokenizer,
+    AutoModelForSeq2SeqLM
 )
+
 from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils import check_min_version
 from transformers.utils.versions import require_version
 from sklearn.linear_model import LogisticRegression
 from sklearn.feature_extraction.text import TfidfVectorizer
 from utils import re_findall
-import re
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
 check_min_version('4.13.0.dev0')
@@ -256,8 +258,9 @@ def main():
 
             ngram_range=(1, 2),  # best so far
             # max_features=8000  # remove for higher accuracy?
-            # max_features=50000
-            max_features=10000
+            max_features=20000
+            # max_features=10000
+            # max_features=1000
         )
 
         train_test_data = {
@@ -276,17 +279,17 @@ def main():
             dataset = raw_datasets[ds_type]
 
             for row in dataset:
-                # Get matches:
-                matches = re_findall(SPONSOR_MATCH_RE, row['extracted'])
+                matches = re_findall(SEGMENT_MATCH_RE, row['extracted'])
+                if matches:
+                    for match in matches:
+                        train_test_data[ds_type]['X'].append(match['text'])
 
-                return  # TODO fix
+                        class_index = CATEGORIES.index(match['category'])
+                        train_test_data[ds_type]['y'].append(class_index)
 
-                if not matches:
-                    matches = [row['text']]
-
-                for match in matches:
-                    train_test_data[ds_type]['X'].append(match)
-                    train_test_data[ds_type]['y'].append(row['sponsor'])
+                else:
+                    train_test_data[ds_type]['X'].append(row['text'])
+                    train_test_data[ds_type]['y'].append(0)
 
         print('Fitting')
         _X_train = vectorizer.fit_transform(train_test_data['train']['X'])
@@ -296,10 +299,10 @@ def main():
         y_test = train_test_data['test']['y']
 
         # 2. Create classifier
-        classifier = LogisticRegression(max_iter=500)
+        classifier = LogisticRegression(max_iter=2000, class_weight='balanced')
 
         # 3. Fit data
-        print('fit classifier')
+        print('Fit classifier')
         classifier.fit(_X_train, y_train)
 
         # 4. Measure accuracy
@@ -336,9 +339,15 @@ def main():
                 )
 
         # Load pretrained model and tokenizer
-        tokenizer = get_tokenizer(model_args)
-        model = get_model(model_args)
+        model = AutoModelForSeq2SeqLM.from_pretrained(
+            model_args.model_name_or_path)
         model.to(device())
+
+        tokenizer = AutoTokenizer.from_pretrained(
+            model_args.model_name_or_path)
+
+        # Ensure model and tokenizer contain the custom tokens
+        CustomTokens.add_custom_tokens(tokenizer)
         model.resize_token_embeddings(len(tokenizer))
 
         if model.config.decoder_start_token_id is None:
@@ -479,9 +488,10 @@ def main():
             train_result = trainer.train(resume_from_checkpoint=checkpoint)
             trainer.save_model()  # Saves the tokenizer too for easy upload
         except KeyboardInterrupt:
-            print('Saving model')
-            trainer.save_model(os.path.join(
-                training_args.output_dir, 'checkpoint-latest'))  # TODO use dir
+            # TODO add option to save model on interrupt?
+            # print('Saving model')
+            # trainer.save_model(os.path.join(
+            #     training_args.output_dir, 'checkpoint-latest'))  # TODO use dir
             raise
 
         metrics = train_result.metrics
