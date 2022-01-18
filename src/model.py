@@ -58,7 +58,7 @@ class ModelArguments:
     )
 
 
-@lru_cache
+@lru_cache(maxsize=None)
 def get_classifier_vectorizer(classifier_args):
     classifier_path = os.path.join(
         classifier_args.classifier_dir, classifier_args.classifier_file)

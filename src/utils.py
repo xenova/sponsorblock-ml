@@ -157,7 +157,10 @@ class InterruptibleTaskPool:
             t = time()
             # Send SIGINT if process doesn't exit quickly enough, and kill it as last resort
             # .is_alive() also implicitly joins the process (good practice in linux)
-            while alive_procs := [p for p in procs if p.is_alive()]:
+            while True:
+                alive_procs = [p for p in procs if p.is_alive()]
+                if not alive_procs:
+                    break
                 if time() > t + self.grace_period:
                     for p in alive_procs:
                         os.kill(p.pid, signal.SIGINT)
