@@ -84,7 +84,7 @@ def main():
     st.write('##### Automatically detect in-video YouTube sponsorships, self/unpaid promotions, and interaction reminders.')
 
     # Load widgets
-    video_id = st.text_input('Video ID:', placeholder='e.g., axtQvkSpoto')
+    video_id = st.text_input('Video ID:') # , placeholder='e.g., axtQvkSpoto'
 
     categories = st.multiselect('Categories:',
                                 CATGEGORY_OPTIONS.keys(),
