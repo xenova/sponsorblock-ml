@@ -73,10 +73,10 @@ CLASSIFIER_PATH = 'Xenova/sponsorblock-classifier'
 
 @st.cache(allow_output_mutation=True)
 def load_predict(model_id):
-    model = MODELS[model_id]
+    model_info = MODELS[model_id]
 
     # Use default segmentation and classification arguments
-    evaluation_args = EvaluationArguments(model_path=model['repo_id'])
+    evaluation_args = EvaluationArguments(model_path=model_info['repo_id'])
     segmentation_args = SegmentationArguments()
     classifier_args = ClassifierArguments()
 
@@ -98,13 +98,13 @@ def load_predict(model_id):
                     )
 
     def predict_function(video_id):
-        if video_id not in model['cache']:
-            model['cache'][video_id] = pred(
+        if video_id not in model_info['cache']:
+            model_info['cache'][video_id] = pred(
                 video_id, model, tokenizer,
                 segmentation_args=segmentation_args,
                 classifier_args=classifier_args
             )
-        return model['cache'][video_id]
+        return model_info['cache'][video_id]
 
     return predict_function
 
