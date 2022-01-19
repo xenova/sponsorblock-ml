@@ -35,21 +35,31 @@ st.set_page_config(
 
 # https://huggingface.co/docs/transformers/model_doc/t5
 # https://huggingface.co/docs/transformers/model_doc/t5v1.1
+
+
+# Faster caching system for predictions (No need to hash)
+@st.cache(allow_output_mutation=True)
+def persistdata():
+    return {}
+
+
 MODELS = {
     'Small (77M)': {
         'pretrained': 'google/t5-v1_1-small',
         'repo_id': 'Xenova/sponsorblock-small',
+        'cache': persistdata()
     },
     'Base v1 (220M)': {
         'pretrained': 't5-base',
         'repo_id': 'EColi/sponsorblock-base-v1',
+        'cache': persistdata()
     },
 
     'Base v1.1 (250M)': {
         'pretrained': 'google/t5-v1_1-base',
         'repo_id': 'Xenova/sponsorblock-base',
+        'cache': persistdata()
     }
-
 }
 
 CATGEGORY_OPTIONS = {
@@ -62,18 +72,11 @@ CLASSIFIER_PATH = 'Xenova/sponsorblock-classifier'
 
 
 @st.cache(allow_output_mutation=True)
-def persistdata():
-    return {}
+def load_predict(model_id):
+    model = MODELS[model_id]
 
-
-# Faster caching system for predictions (No need to hash)
-predictions_cache = persistdata()
-
-
-@st.cache(allow_output_mutation=True)
-def load_predict(model_path):
     # Use default segmentation and classification arguments
-    evaluation_args = EvaluationArguments(model_path=model_path)
+    evaluation_args = EvaluationArguments(model_path=model['repo_id'])
     segmentation_args = SegmentationArguments()
     classifier_args = ClassifierArguments()
 
@@ -95,13 +98,13 @@ def load_predict(model_path):
                     )
 
     def predict_function(video_id):
-        if video_id not in predictions_cache:
-            predictions_cache[video_id] = pred(
+        if video_id not in model['cache']:
+            model['cache'][video_id] = pred(
                 video_id, model, tokenizer,
                 segmentation_args=segmentation_args,
                 classifier_args=classifier_args
             )
-        return predictions_cache[video_id]
+        return model['cache'][video_id]
 
     return predict_function
 
@@ -115,7 +118,7 @@ def main():
     model_id = st.selectbox('Select model', MODELS.keys(), index=0)
 
     # Load prediction function
-    predict = load_predict(MODELS[model_id]['repo_id'])
+    predict = load_predict(model_id)
 
     video_id = st.text_input('Video ID:')  # , placeholder='e.g., axtQvkSpoto'
 
