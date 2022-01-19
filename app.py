@@ -31,7 +31,7 @@ st.set_page_config(
     }
 )
 
-MODEL_PATH = 'Xenova/sponsorblock-small_v2022.01.19'
+MODEL_PATH = 'Xenova/sponsorblock-small'
 
 CLASSIFIER_PATH = 'Xenova/sponsorblock-classifier'
 
