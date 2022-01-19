@@ -5,4 +5,4 @@ torch
 pandas
 numpy
 sentencepiece
-sklearn
+scikit-learn
