@@ -42,25 +42,28 @@ st.set_page_config(
 def persistdata():
     return {}
 
+prediction_cache = persistdata()
 
 MODELS = {
     'Small (77M)': {
         'pretrained': 'google/t5-v1_1-small',
         'repo_id': 'Xenova/sponsorblock-small',
-        'cache': persistdata()
     },
     'Base v1 (220M)': {
         'pretrained': 't5-base',
         'repo_id': 'EColi/sponsorblock-base-v1',
-        'cache': persistdata()
     },
 
     'Base v1.1 (250M)': {
         'pretrained': 'google/t5-v1_1-base',
         'repo_id': 'Xenova/sponsorblock-base',
-        'cache': persistdata()
     }
 }
+
+# Create per-model cache
+for m in MODELS:
+    if m not in prediction_cache:
+        prediction_cache[m] = {}
 
 CATGEGORY_OPTIONS = {
     'SPONSOR': 'Sponsor',
@@ -98,13 +101,13 @@ def load_predict(model_id):
                     )
 
     def predict_function(video_id):
-        if video_id not in model_info['cache']:
-            model_info['cache'][video_id] = pred(
+        if video_id not in prediction_cache[model_id]:
+            prediction_cache[model_id][video_id] = pred(
                 video_id, model, tokenizer,
                 segmentation_args=segmentation_args,
                 classifier_args=classifier_args
             )
-        return model_info['cache'][video_id]
+        return prediction_cache[model_id][video_id]
 
     return predict_function
 
