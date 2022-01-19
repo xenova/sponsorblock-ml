@@ -35,6 +35,7 @@ MODEL_PATH = 'Xenova/sponsorblock-small_v2022.01.19'
 
 CLASSIFIER_PATH = 'Xenova/sponsorblock-classifier'
 
+
 @st.cache(allow_output_mutation=True)
 def persistdata():
     return {}
@@ -57,8 +58,16 @@ def load_predict():
     tokenizer = AutoTokenizer.from_pretrained(evaluation_args.model_path)
 
     # Save classifier and vectorizer
-    hf_hub_download(repo_id=CLASSIFIER_PATH, filename=classifier_args.classifier_file, cache_dir=classifier_args.classifier_dir)
-    hf_hub_download(repo_id=CLASSIFIER_PATH, filename=classifier_args.vectorizer_file, cache_dir=classifier_args.classifier_dir)
+    hf_hub_download(repo_id=CLASSIFIER_PATH,
+                    filename=classifier_args.classifier_file,
+                    cache_dir=classifier_args.classifier_dir,
+                    force_filename=classifier_args.classifier_file,
+                    )
+    hf_hub_download(repo_id=CLASSIFIER_PATH,
+                    filename=classifier_args.vectorizer_file,
+                    cache_dir=classifier_args.classifier_dir,
+                    force_filename=classifier_args.vectorizer_file,
+                    )
 
     def predict_function(video_id):
         if video_id not in predictions_cache:
@@ -90,7 +99,7 @@ def main():
     st.write('##### Automatically detect in-video YouTube sponsorships, self/unpaid promotions, and interaction reminders.')
 
     # Load widgets
-    video_id = st.text_input('Video ID:') # , placeholder='e.g., axtQvkSpoto'
+    video_id = st.text_input('Video ID:')  # , placeholder='e.g., axtQvkSpoto'
 
     categories = st.multiselect('Categories:',
                                 CATGEGORY_OPTIONS.keys(),
