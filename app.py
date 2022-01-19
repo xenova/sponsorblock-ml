@@ -20,8 +20,8 @@ from evaluate import EvaluationArguments
 from shared import device
 
 st.set_page_config(
-    page_title="SponsorBlock ML",
-    page_icon="🤖",
+    page_title='SponsorBlock ML',
+    page_icon='🤖',
     #  layout='wide',
     #  initial_sidebar_state="expanded",
     menu_items={
@@ -30,8 +30,33 @@ st.set_page_config(
         #  'About': "# This is a header. This is an *extremely* cool app!"
     }
 )
+# https://github.com/google-research/text-to-text-transfer-transformer#released-model-checkpoints
+# https://github.com/google-research/text-to-text-transfer-transformer/blob/main/released_checkpoints.md#experimental-t5-pre-trained-model-checkpoints
 
-MODEL_PATH = 'Xenova/sponsorblock-small'
+# https://huggingface.co/docs/transformers/model_doc/t5
+# https://huggingface.co/docs/transformers/model_doc/t5v1.1
+MODELS = {
+    'Small (77M)': {
+        'pretrained': 'google/t5-v1_1-small',
+        'repo_id': 'Xenova/sponsorblock-small',
+    },
+    'Base v1 (220M)': {
+        'pretrained': 't5-base',
+        'repo_id': 'EColi/sponsorblock-base-v1',
+    },
+
+    'Base v1.1 (250M)': {
+        'pretrained': 'google/t5-v1_1-base',
+        'repo_id': 'Xenova/sponsorblock-base',
+    }
+
+}
+
+CATGEGORY_OPTIONS = {
+    'SPONSOR': 'Sponsor',
+    'SELFPROMO': 'Self/unpaid promo',
+    'INTERACTION': 'Interaction reminder',
+}
 
 CLASSIFIER_PATH = 'Xenova/sponsorblock-classifier'
 
@@ -46,9 +71,9 @@ predictions_cache = persistdata()
 
 
 @st.cache(allow_output_mutation=True)
-def load_predict():
+def load_predict(model_path):
     # Use default segmentation and classification arguments
-    evaluation_args = EvaluationArguments(model_path=MODEL_PATH)
+    evaluation_args = EvaluationArguments(model_path=model_path)
     segmentation_args = SegmentationArguments()
     classifier_args = ClassifierArguments()
 
@@ -81,24 +106,17 @@ def load_predict():
     return predict_function
 
 
-CATGEGORY_OPTIONS = {
-    'SPONSOR': 'Sponsor',
-    'SELFPROMO': 'Self/unpaid promo',
-    'INTERACTION': 'Interaction reminder',
-}
-
-
-# Load prediction function
-predict = load_predict()
-
-
 def main():
 
     # Display heading and subheading
     st.write('# SponsorBlock ML')
     st.write('##### Automatically detect in-video YouTube sponsorships, self/unpaid promotions, and interaction reminders.')
 
-    # Load widgets
+    model_id = st.selectbox('Select model', MODELS.keys(), index=0)
+
+    # Load prediction function
+    predict = load_predict(MODELS[model_id]['repo_id'])
+
     video_id = st.text_input('Video ID:')  # , placeholder='e.g., axtQvkSpoto'
 
     categories = st.multiselect('Categories:',
