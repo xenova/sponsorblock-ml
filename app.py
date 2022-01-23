@@ -187,6 +187,8 @@ def main():
     json_data = quote(json.dumps(submit_segments))
     link = f'[Submit Segments](https://www.youtube.com/watch?v={video_id}#segments={json_data})'
     st.markdown(link, unsafe_allow_html=True)
+    wikiLink = f'[Review generated segments before submitting!](https://wiki.sponsor.ajay.app/w/Automating_Submissions)'
+    st.markdown(wikiLink, unsafe_allow_html=True)
 
 
 if __name__ == '__main__':
