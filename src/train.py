@@ -54,38 +54,7 @@ class DataTrainingArguments:
         default=None,
         metadata={'help': 'The number of processes to use for the preprocessing.'},
     )
-    # https://github.com/huggingface/transformers/issues/5204
-    max_source_length: Optional[int] = field(
-        default=512,
-        metadata={
-            'help': 'The maximum total input sequence length after tokenization. Sequences longer '
-            'than this will be truncated, sequences shorter will be padded.'
-        },
-    )
-    max_target_length: Optional[int] = field(
-        default=512,
-        metadata={
-            'help': 'The maximum total sequence length for target text after tokenization. Sequences longer '
-            'than this will be truncated, sequences shorter will be padded.'
-        },
-    )
-    val_max_target_length: Optional[int] = field(
-        default=None,
-        metadata={
-            'help': 'The maximum total sequence length for validation target text after tokenization. Sequences longer '
-            'than this will be truncated, sequences shorter will be padded. Will default to `max_target_length`.'
-            'This argument is also used to override the ``max_length`` param of ``model.generate``, which is used '
-            'during ``evaluate`` and ``predict``.'
-        },
-    )
-    pad_to_max_length: bool = field(
-        default=False,
-        metadata={
-            'help': 'Whether to pad all samples to model maximum sentence length. '
-            'If False, will pad the samples dynamically when batching to the maximum length in the batch. More '
-            'efficient on GPU but very bad for TPU.'
-        },
-    )
+
     max_train_samples: Optional[int] = field(
         default=None,
         metadata={
@@ -104,29 +73,6 @@ class DataTrainingArguments:
             'help': 'For debugging purposes or quicker training, truncate the number of prediction examples to this value if set.'
         },
     )
-    num_beams: Optional[int] = field(
-        default=None,
-        metadata={
-            'help': 'Number of beams to use for evaluation. This argument will be passed to ``model.generate``, '
-            'which is used during ``evaluate`` and ``predict``.'
-        },
-    )
-    ignore_pad_token_for_loss: bool = field(
-        default=True,
-        metadata={
-            'help': 'Whether to ignore the tokens corresponding to padded labels in the loss computation or not.'
-        },
-    )
-    source_prefix: Optional[str] = field(
-        default=CustomTokens.EXTRACT_SEGMENTS_PREFIX.value, metadata={
-            'help': 'A prefix to add before every source text (useful for T5 models).'}
-    )
-
-    # TODO add vectorizer params
-
-    def __post_init__(self):
-        if self.val_max_target_length is None:
-            self.val_max_target_length = self.max_target_length
 
 
 @dataclass
@@ -319,12 +265,6 @@ def main():
             pickle.dump(vectorizer, fp)
 
     if not training_args.skip_train_transformer:
-
-        if data_training_args.source_prefix is None and 't5-' in model_args.model_name_or_path:
-            logger.warning(
-                "You're running a t5 model but didn't provide a source prefix, which is the expected, e.g. with `--source_prefix 'summarize: ' `"
-            )
-
         # Detecting last checkpoint.
         last_checkpoint = None
         if os.path.isdir(training_args.output_dir) and not training_args.overwrite_output_dir:
@@ -338,77 +278,38 @@ def main():
                     f'Checkpoint detected, resuming training at {last_checkpoint}. To avoid this behavior, change the `--output_dir` or add `--overwrite_output_dir` to train from scratch.'
                 )
 
-        # Load pretrained model and tokenizer
-        model = AutoModelForSeq2SeqLM.from_pretrained(
-            model_args.model_name_or_path)
-        model.to(device())
-
-        tokenizer = AutoTokenizer.from_pretrained(
-            model_args.model_name_or_path)
-
-        # Ensure model and tokenizer contain the custom tokens
-        CustomTokens.add_custom_tokens(tokenizer)
-        model.resize_token_embeddings(len(tokenizer))
-
-        if model.config.decoder_start_token_id is None:
-            raise ValueError(
-                'Make sure that `config.decoder_start_token_id` is correctly defined')
-
-        if hasattr(model.config, 'max_position_embeddings') and model.config.max_position_embeddings < data_training_args.max_source_length:
-            if model_args.resize_position_embeddings is None:
-                logger.warning(
-                    f"Increasing the model's number of position embedding vectors from {model.config.max_position_embeddings} to {data_training_args.max_source_length}."
-                )
-                model.resize_position_embeddings(
-                    data_training_args.max_source_length)
-
-            elif model_args.resize_position_embeddings:
-                model.resize_position_embeddings(
-                    data_training_args.max_source_length)
-
-            else:
-                raise ValueError(
-                    f'`--max_source_length` is set to {data_training_args.max_source_length}, but the model only has {model.config.max_position_embeddings}'
-                    f' position encodings. Consider either reducing `--max_source_length` to {model.config.max_position_embeddings} or to automatically '
-                    "resize the model's position encodings by passing `--resize_position_embeddings`."
-                )
+        from model import get_model_tokenizer
+        model, tokenizer = get_model_tokenizer(
+            model_args.model_name_or_path, model_args.cache_dir)
+        # max_tokenizer_length = model.config.d_model
 
         # Preprocessing the datasets.
         # We need to tokenize inputs and targets.
         column_names = raw_datasets['train'].column_names
 
-        # Temporarily set max_target_length for training.
-        max_target_length = data_training_args.max_target_length
-        padding = 'max_length' if data_training_args.pad_to_max_length else False
+        prefix = CustomTokens.EXTRACT_SEGMENTS_PREFIX.value
 
-        if training_args.label_smoothing_factor > 0 and not hasattr(model, 'prepare_decoder_input_ids_from_labels'):
-            logger.warning(
-                'label_smoothing is enabled but the `prepare_decoder_input_ids_from_labels` method is not defined for'
-                f'`{model.__class__.__name__}`. This will lead to loss being calculated twice and will take up more memory'
-            )
-
-        prefix = data_training_args.source_prefix if data_training_args.source_prefix is not None else ''
+        PAD_TOKEN_REPLACE_ID = -100
 
         # https://github.com/huggingface/transformers/issues/5204
         def preprocess_function(examples):
             inputs = examples['text']
             targets = examples['extracted']
             inputs = [prefix + inp for inp in inputs]
-            model_inputs = tokenizer(
-                inputs, max_length=data_training_args.max_source_length, padding=padding, truncation=True)
+            model_inputs = tokenizer(inputs, truncation=True)
 
             # Setup the tokenizer for targets
             with tokenizer.as_target_tokenizer():
-                labels = tokenizer(
-                    targets, max_length=max_target_length, padding=padding, truncation=True)
+                labels = tokenizer(targets, truncation=True)
 
-            # If we are padding here, replace all tokenizer.pad_token_id in the labels by -100 when we want to ignore
-            # padding in the loss.
-            if padding == 'max_length' and data_training_args.ignore_pad_token_for_loss:
-                labels['input_ids'] = [
-                    [(l if l != tokenizer.pad_token_id else -100) for l in label] for label in labels['input_ids']
-                ]
-            model_inputs['labels'] = labels['input_ids']
+            # If we are padding here, replace all tokenizer.pad_token_id in the labels by -100
+            # when we want to ignore padding in the loss.
+
+            model_inputs['labels'] = [
+                [(l if l != tokenizer.pad_token_id else PAD_TOKEN_REPLACE_ID)
+                 for l in label]
+                for label in labels['input_ids']
+            ]
 
             return model_inputs
 
@@ -434,7 +335,6 @@ def main():
             train_dataset = prepare_dataset(
                 train_dataset, desc='Running tokenizer on train dataset')
 
-        max_target_length = data_training_args.val_max_target_length
         if 'validation' not in raw_datasets:
             raise ValueError('Validation dataset missing')
         eval_dataset = raw_datasets['validation']
@@ -456,12 +356,10 @@ def main():
                 predict_dataset, desc='Running tokenizer on prediction dataset')
 
         # Data collator
-        label_pad_token_id = - \
-            100 if data_training_args.ignore_pad_token_for_loss else tokenizer.pad_token_id
         data_collator = DataCollatorForSeq2Seq(
             tokenizer,
             model=model,
-            label_pad_token_id=label_pad_token_id,
+            label_pad_token_id=PAD_TOKEN_REPLACE_ID,
             pad_to_multiple_of=8 if training_args.fp16 else None,
         )
 
