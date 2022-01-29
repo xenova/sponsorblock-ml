@@ -1,4 +1,5 @@
 
+from functools import partial
 from math import ceil, floor
 import streamlit.components.v1 as components
 from transformers import (
@@ -86,6 +87,16 @@ def download_classifier(classifier_args):
     return True
 
 
+def predict_function(model_id, model, tokenizer, segmentation_args, classifier_args, video_id):
+    if video_id not in prediction_cache[model_id]:
+        prediction_cache[model_id][video_id] = pred(
+            video_id, model, tokenizer,
+            segmentation_args=segmentation_args,
+            classifier_args=classifier_args
+        )
+    return prediction_cache[model_id][video_id]
+
+
 @st.cache(persist=True, allow_output_mutation=True)
 def load_predict(model_id):
     model_info = MODELS[model_id]
@@ -102,16 +113,7 @@ def load_predict(model_id):
 
     download_classifier(classifier_args)
 
-    def predict_function(video_id):
-        if video_id not in prediction_cache[model_id]:
-            prediction_cache[model_id][video_id] = pred(
-                video_id, model, tokenizer,
-                segmentation_args=segmentation_args,
-                classifier_args=classifier_args
-            )
-        return prediction_cache[model_id][video_id]
-
-    return predict_function
+    return partial(predict_function, model_id, model, tokenizer, segmentation_args, classifier_args)
 
 
 def main():
@@ -191,6 +193,7 @@ def main():
     st.markdown(link, unsafe_allow_html=True)
     wiki_link = '[Review generated segments before submitting!](https://wiki.sponsor.ajay.app/w/Automating_Submissions)'
     st.markdown(wiki_link, unsafe_allow_html=True)
+
 
 if __name__ == '__main__':
     main()
