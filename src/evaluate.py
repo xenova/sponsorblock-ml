@@ -1,3 +1,4 @@
+from model import get_model_tokenizer
 from utils import jaccard
 from datasets import load_dataset
 from transformers import (
@@ -5,10 +6,10 @@ from transformers import (
     AutoTokenizer,
     HfArgumentParser
 )
-from preprocess import DatasetArguments, ProcessedArguments, get_words
+from preprocess import DatasetArguments, get_words
 from shared import device, GeneralArguments
 from predict import ClassifierArguments, predict, TrainingOutputArguments
-from segment import word_start, word_end, SegmentationArguments, add_labels_to_words
+from segment import extract_segment, word_start, word_end, SegmentationArguments, add_labels_to_words
 import pandas as pd
 from dataclasses import dataclass, field
 from typing import Optional
@@ -16,6 +17,7 @@ from tqdm import tqdm
 import json
 import os
 import random
+from shared import seconds_to_time
 
 
 @dataclass
@@ -29,11 +31,8 @@ class EvaluationArguments(TrainingOutputArguments):
             'help': 'The number of videos to test on'
         }
     )
-
-    data_dir: Optional[str] = DatasetArguments.__dataclass_fields__['data_dir']
-    dataset: Optional[str] = DatasetArguments.__dataclass_fields__[
-        'validation_file']
-
+    start_index: int = field(default=None, metadata={
+        'help': 'Video to start the evaluation at.'})
     output_file: Optional[str] = field(
         default='metrics.csv',
         metadata={
@@ -98,13 +97,13 @@ def calculate_metrics(labelled_words, predictions):
 
         if predicted_sponsor:
             # total_positive_time += duration
-            if word['category'] is not None:  # Is actual sponsor
+            if word.get('category') is not None:  # Is actual sponsor
                 metrics['true_positive'] += duration
             else:
                 metrics['false_positive'] += duration
         else:
             # total_negative_time += duration
-            if word['category'] is not None:  # Is actual sponsor
+            if word.get('category') is not None:  # Is actual sponsor
                 metrics['false_negative'] += duration
             else:
                 metrics['true_negative'] += duration
@@ -141,34 +140,38 @@ def calculate_metrics(labelled_words, predictions):
 def main():
     hf_parser = HfArgumentParser((
         EvaluationArguments,
-        ProcessedArguments,
+        DatasetArguments,
         SegmentationArguments,
         ClassifierArguments,
         GeneralArguments
     ))
 
-    evaluation_args, processed_args, segmentation_args, classifier_args, _ = hf_parser.parse_args_into_dataclasses()
+    evaluation_args, dataset_args, segmentation_args, classifier_args, _ = hf_parser.parse_args_into_dataclasses()
 
-    model = AutoModelForSeq2SeqLM.from_pretrained(evaluation_args.model_path)
-    model.to(device())
+    model, tokenizer = get_model_tokenizer(evaluation_args.model_path)
 
-    tokenizer = AutoTokenizer.from_pretrained(evaluation_args.model_path)
+    # # TODO find better way of evaluating videos not trained on
+    # dataset = load_dataset('json', data_files=os.path.join(
+    #     dataset_args.data_dir, dataset_args.validation_file))['train']
+    # video_ids = [row['video_id'] for row in dataset]
 
-    dataset = load_dataset('json', data_files=os.path.join(
-        evaluation_args.data_dir, evaluation_args.dataset))['train']
+    # Load labelled data:
+    final_path = os.path.join(
+        dataset_args.data_dir, dataset_args.processed_file)
 
-    video_ids = [row['video_id'] for row in dataset]
-    random.shuffle(video_ids)  # TODO Make param
+    with open(final_path) as fp:
+        final_data = json.load(fp)
+        video_ids = list(final_data.keys())
+
+    random.shuffle(video_ids)
+
+    if evaluation_args.start_index is not None:
+        video_ids = video_ids[evaluation_args.start_index:]
 
     if evaluation_args.max_videos is not None:
         video_ids = video_ids[:evaluation_args.max_videos]
 
-    # Load labelled data:
-    final_path = os.path.join(
-        processed_args.processed_dir, processed_args.processed_file)
-
-    with open(final_path) as fp:
-        final_data = json.load(fp)
+    # TODO option to choose categories
 
     total_accuracy = 0
     total_precision = 0
@@ -179,9 +182,12 @@ def main():
 
     try:
         with tqdm(video_ids) as progress:
-            for video_id in progress:
+            for video_index, video_id in enumerate(progress):
+
                 progress.set_description(f'Processing {video_id}')
                 sponsor_segments = final_data.get(video_id, [])
+                if not sponsor_segments:
+                    continue  # Ignore empty
 
                 words = get_words(video_id)
                 if not words:
@@ -211,9 +217,47 @@ def main():
 
                 labelled_predicted_segments = attach_predictions_to_sponsor_segments(
                     predictions, sponsor_segments)
-                for seg in labelled_predicted_segments:
-                    if seg['best_prediction'] is None:
-                        print('\nNo match found for', seg)
+
+                # Identify possible issues:
+                missed_segments = [
+                    prediction for prediction in predictions if prediction['best_sponsorship'] is None]
+                incorrect_segments = [
+                    seg for seg in labelled_predicted_segments if seg['best_prediction'] is None]
+
+                if missed_segments or incorrect_segments:
+                    print('Issues identified for',
+                          video_id, f'(#{video_index})')
+                    # Potentially missed segments (model predicted, but not in database)
+                    if missed_segments:
+                        print(' - Missed segments:')
+                        for i, missed_segment in enumerate(missed_segments, start=1):
+                            print(f'\t#{i}:', seconds_to_time(
+                                missed_segment['start']), '-->', seconds_to_time(missed_segment['end']))
+                            print('\t\tText: "', ' '.join(
+                                [w['text'] for w in missed_segment['words']]), '"', sep='')
+                            print('\t\tCategory:',
+                                  missed_segment.get('category'))
+                            print('\t\tProbability:',
+                                  missed_segment.get('probability'))
+
+                    # Potentially incorrect segments (model didn't predict, but in database)
+                    if incorrect_segments:
+                        print(' - Incorrect segments:')
+                        for i, incorrect_segment in enumerate(incorrect_segments, start=1):
+                            print(f'\t#{i}:', seconds_to_time(
+                                incorrect_segment['start']), '-->', seconds_to_time(incorrect_segment['end']))
+
+                            seg_words = extract_segment(
+                                words, incorrect_segment['start'], incorrect_segment['end'])
+                            print('\t\tText: "', ' '.join(
+                                [w['text'] for w in seg_words]), '"', sep='')
+                            print('\t\tUUID:', incorrect_segment['uuid'])
+                            print('\t\tCategory:',
+                                  incorrect_segment['category'])
+                            print('\t\tVotes:', incorrect_segment['votes'])
+                            print('\t\tViews:', incorrect_segment['views'])
+                            print('\t\tLocked:', incorrect_segment['locked'])
+                    print()
 
     except KeyboardInterrupt:
         pass
