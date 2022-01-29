@@ -5,7 +5,8 @@ from typing import Optional
 from segment import (
     generate_segments,
     extract_segment,
-    SAFETY_TOKENS,
+    MIN_SAFETY_TOKENS,
+    SAFETY_TOKENS_PERCENTAGE,
     CustomTokens,
     word_start,
     word_end,
@@ -13,7 +14,7 @@ from segment import (
 )
 import preprocess
 from errors import TranscriptError
-from model import get_classifier_vectorizer
+from model import get_classifier_vectorizer, get_model_tokenizer
 from transformers import (
     AutoModelForSeq2SeqLM,
     AutoTokenizer,
@@ -26,25 +27,15 @@ import logging
 
 import re
 
-
-def seconds_to_time(seconds, remove_leading_zeroes=False):
-    fractional = round(seconds % 1, 3)
-    fractional = '' if fractional == 0 else str(fractional)[1:]
-    h, remainder = divmod(abs(int(seconds)), 3600)
-    m, s = divmod(remainder, 60)
-    hms = f'{h:02}:{m:02}:{s:02}'
-    if remove_leading_zeroes:
-        hms = re.sub(r'^0(?:0:0?)?', '', hms)
-    return f"{'-' if seconds < 0 else ''}{hms}{fractional}"
-
-
+from shared import seconds_to_time
 @dataclass
 class TrainingOutputArguments:
 
     model_path: str = field(
         default=None,
         metadata={
-            'help': 'Path to pretrained model used for prediction'}
+            'help': 'Path to pretrained model used for prediction'
+        }
     )
 
     output_dir: Optional[str] = OutputArguments.__dataclass_fields__[
@@ -106,7 +97,8 @@ class ClassifierArguments:
         default=0.5, metadata={'help': 'Remove all predictions whose classification probability is below this threshold.'})
 
 
-def filter_and_add_probabilities(predictions, classifier_args):  # classifier, vectorizer,
+# classifier, vectorizer,
+def filter_and_add_probabilities(predictions, classifier_args):
     """Use classifier to filter predictions"""
     if not predictions:
         return predictions
@@ -135,7 +127,7 @@ def filter_and_add_probabilities(predictions, classifier_args):  # classifier, v
             continue  # Ignore
 
         if (prediction['category'] not in predicted_probabilities) \
-            or (classifier_category is not None and classifier_probability > 0.5):  # TODO make param
+                or (classifier_category is not None and classifier_probability > 0.5):  # TODO make param
             # Unknown category or we are confident enough to overrule,
             # so change category to what was predicted by classifier
             prediction['category'] = classifier_category
@@ -175,7 +167,8 @@ def predict(video_id, model, tokenizer, segmentation_args, words=None, classifie
 
     # TODO add back
     if classifier_args is not None:
-        predictions = filter_and_add_probabilities(predictions, classifier_args)
+        predictions = filter_and_add_probabilities(
+            predictions, classifier_args)
 
     return predictions
 
@@ -205,8 +198,12 @@ def predict_sponsor_text(text, model, tokenizer):
     input_ids = tokenizer(
         f'{CustomTokens.EXTRACT_SEGMENTS_PREFIX.value} {text}', return_tensors='pt', truncation=True).input_ids.to(device())
 
-    # Can't be longer than input length + SAFETY_TOKENS or model input dim
-    max_out_len = min(len(input_ids[0]) + SAFETY_TOKENS, model.model_dim)
+    max_out_len = round(min(
+        max(
+            len(input_ids[0])/SAFETY_TOKENS_PERCENTAGE,
+            len(input_ids[0]) + MIN_SAFETY_TOKENS
+        ),
+        model.model_dim))
     outputs = model.generate(input_ids, max_length=max_out_len)
 
     return tokenizer.decode(outputs[0], skip_special_tokens=True)
@@ -300,10 +297,7 @@ def main():
         print('No video ID supplied. Use `--video_id`.')
         return
 
-    model = AutoModelForSeq2SeqLM.from_pretrained(predict_args.model_path)
-    model.to(device())
-
-    tokenizer = AutoTokenizer.from_pretrained(predict_args.model_path)
+    model, tokenizer = get_model_tokenizer(predict_args.model_path)
 
     predict_args.video_id = predict_args.video_id.strip()
     predictions = predict(predict_args.video_id, model, tokenizer,

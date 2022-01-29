@@ -1,3 +1,4 @@
+import re
 import gc
 from time import time_ns
 import random
@@ -10,6 +11,7 @@ from enum import Enum
 
 START_SEGMENT_TEMPLATE = 'START_{}_TOKEN'
 END_SEGMENT_TEMPLATE = 'END_{}_TOKEN'
+
 
 class CustomTokens(Enum):
     EXTRACT_SEGMENTS_PREFIX = 'EXTRACT_SEGMENTS: '
@@ -29,7 +31,7 @@ class CustomTokens(Enum):
     LAUGHTER = '[Laughter]'
 
     PROFANITY = 'PROFANITY_TOKEN'
-    
+
     # Segment tokens
     NO_SEGMENT = 'NO_SEGMENT_TOKEN'
 
@@ -101,6 +103,17 @@ class GeneralArguments:
 
 def device():
     return torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+
+def seconds_to_time(seconds, remove_leading_zeroes=False):
+    fractional = round(seconds % 1, 3)
+    fractional = '' if fractional == 0 else str(fractional)[1:]
+    h, remainder = divmod(abs(int(seconds)), 3600)
+    m, s = divmod(remainder, 60)
+    hms = f'{h:02}:{m:02}:{s:02}'
+    if remove_leading_zeroes:
+        hms = re.sub(r'^0(?:0:0?)?', '', hms)
+    return f"{'-' if seconds < 0 else ''}{hms}{fractional}"
 
 
 def reset():
