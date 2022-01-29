@@ -1,3 +1,5 @@
+from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+from shared import CustomTokens, device
 from functools import lru_cache
 import pickle
 import os
@@ -12,7 +14,8 @@ class ModelArguments:
     """
 
     model_name_or_path: str = field(
-        default='google/t5-v1_1-small',  # t5-small
+        default=None,
+        # default='google/t5-v1_1-small',  # t5-small
         metadata={
             'help': 'Path to pretrained model or model identifier from huggingface.co/models'
         }
@@ -20,11 +23,11 @@ class ModelArguments:
     # config_name: Optional[str] = field( # TODO remove?
     #     default=None, metadata={'help': 'Pretrained config name or path if not the same as model_name'}
     # )
-    tokenizer_name: Optional[str] = field(
-        default=None, metadata={
-            'help': 'Pretrained tokenizer name or path if not the same as model_name'
-        }
-    )
+    # tokenizer_name: Optional[str] = field(
+    #     default=None, metadata={
+    #         'help': 'Pretrained tokenizer name or path if not the same as model_name'
+    #     }
+    # )
     cache_dir: Optional[str] = field(
         default=None,
         metadata={
@@ -71,3 +74,27 @@ def get_classifier_vectorizer(classifier_args):
         vectorizer = pickle.load(fp)
 
     return classifier, vectorizer
+
+
+@lru_cache(maxsize=None)
+def get_model_tokenizer(model_name_or_path, cache_dir=None):
+    if model_name_or_path is None:
+        raise ValueError('Invalid model_name_or_path.')
+
+    # Load pretrained model and tokenizer
+    model = AutoModelForSeq2SeqLM.from_pretrained(model_name_or_path, cache_dir=cache_dir)
+    model.to(device())
+
+    tokenizer = AutoTokenizer.from_pretrained(
+        model_name_or_path, max_length=model.config.d_model, cache_dir=cache_dir)
+
+    # Ensure model and tokenizer contain the custom tokens
+    CustomTokens.add_custom_tokens(tokenizer)
+    model.resize_token_embeddings(len(tokenizer))
+
+    # TODO add this back: means that different models will have different training data
+    # Currently we only send 512 tokens to the model each time...
+    # Adjust based on dimensions of model
+    # tokenizer.model_max_length = model.config.d_model
+
+    return model, tokenizer
