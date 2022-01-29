@@ -9,6 +9,12 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 
+CATGEGORY_OPTIONS = {
+    'SPONSOR': 'Sponsor',
+    'SELFPROMO': 'Self/unpaid promo',
+    'INTERACTION': 'Interaction reminder',
+}
+
 START_SEGMENT_TEMPLATE = 'START_{}_TOKEN'
 END_SEGMENT_TEMPLATE = 'END_{}_TOKEN'
 
