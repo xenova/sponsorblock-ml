@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'src
 
 from predict import SegmentationArguments, ClassifierArguments, predict as pred, seconds_to_time  # noqa
 from evaluate import EvaluationArguments
-from shared import device
+from shared import device, CATGEGORY_OPTIONS
 
 st.set_page_config(
     page_title='SponsorBlock ML',
@@ -38,9 +38,10 @@ st.set_page_config(
 
 
 # Faster caching system for predictions (No need to hash)
-@st.cache(allow_output_mutation=True)
+@st.cache(persist=True, allow_output_mutation=True)
 def persistdata():
     return {}
+
 
 prediction_cache = persistdata()
 
@@ -65,16 +66,27 @@ for m in MODELS:
     if m not in prediction_cache:
         prediction_cache[m] = {}
 
-CATGEGORY_OPTIONS = {
-    'SPONSOR': 'Sponsor',
-    'SELFPROMO': 'Self/unpaid promo',
-    'INTERACTION': 'Interaction reminder',
-}
 
 CLASSIFIER_PATH = 'Xenova/sponsorblock-classifier'
 
 
-@st.cache(allow_output_mutation=True)
+@st.cache(persist=True, allow_output_mutation=True)
+def download_classifier(classifier_args):
+    # Save classifier and vectorizer
+    hf_hub_download(repo_id=CLASSIFIER_PATH,
+                    filename=classifier_args.classifier_file,
+                    cache_dir=classifier_args.classifier_dir,
+                    force_filename=classifier_args.classifier_file,
+                    )
+    hf_hub_download(repo_id=CLASSIFIER_PATH,
+                    filename=classifier_args.vectorizer_file,
+                    cache_dir=classifier_args.classifier_dir,
+                    force_filename=classifier_args.vectorizer_file,
+                    )
+    return True
+
+
+@st.cache(persist=True, allow_output_mutation=True)
 def load_predict(model_id):
     model_info = MODELS[model_id]
 
@@ -88,17 +100,7 @@ def load_predict(model_id):
 
     tokenizer = AutoTokenizer.from_pretrained(evaluation_args.model_path)
 
-    # Save classifier and vectorizer
-    hf_hub_download(repo_id=CLASSIFIER_PATH,
-                    filename=classifier_args.classifier_file,
-                    cache_dir=classifier_args.classifier_dir,
-                    force_filename=classifier_args.classifier_file,
-                    )
-    hf_hub_download(repo_id=CLASSIFIER_PATH,
-                    filename=classifier_args.vectorizer_file,
-                    cache_dir=classifier_args.classifier_dir,
-                    force_filename=classifier_args.vectorizer_file,
-                    )
+    download_classifier(classifier_args)
 
     def predict_function(video_id):
         if video_id not in prediction_cache[model_id]:
@@ -187,9 +189,8 @@ def main():
     json_data = quote(json.dumps(submit_segments))
     link = f'[Submit Segments](https://www.youtube.com/watch?v={video_id}#segments={json_data})'
     st.markdown(link, unsafe_allow_html=True)
-    wikiLink = f'[Review generated segments before submitting!](https://wiki.sponsor.ajay.app/w/Automating_Submissions)'
-    st.markdown(wikiLink, unsafe_allow_html=True)
-
+    wiki_link = '[Review generated segments before submitting!](https://wiki.sponsor.ajay.app/w/Automating_Submissions)'
+    st.markdown(wiki_link, unsafe_allow_html=True)
 
 if __name__ == '__main__':
     main()
