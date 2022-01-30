@@ -1,6 +1,4 @@
-from shared import CATGEGORY_OPTIONS
-from utils import jaccard
-from shared import START_SEGMENT_TEMPLATE, END_SEGMENT_TEMPLATE
+from utils import jaccard, Task, InterruptibleTaskPool
 from functools import lru_cache
 from datetime import datetime
 import itertools
@@ -11,18 +9,16 @@ import segment
 from tqdm import tqdm
 from dataclasses import dataclass, field
 from transformers import HfArgumentParser
-from shared import GeneralArguments, CustomTokens
+from shared import CATGEGORY_OPTIONS, START_SEGMENT_TEMPLATE, END_SEGMENT_TEMPLATE, GeneralArguments, CustomTokens
 import csv
 import re
 import random
 import logging
-from youtube_transcript_api import YouTubeTranscriptApi
-from youtube_transcript_api._errors import CouldNotRetrieveTranscript, YouTubeRequestFailed, TooManyRequests
+from youtube_transcript_api import YouTubeTranscriptApi, CouldNotRetrieveTranscript, YouTubeRequestFailed, TooManyRequests
 import os
 import json
 import time
 import requests
-from utils import Task, InterruptibleTaskPool
 
 
 def find(s, ch):
@@ -264,6 +260,9 @@ def remove_duplicate_segments(segments):
             if best_similar_seg not in best:
                 best.append(best_similar_seg)
 
+    if len(segments) != len(best):  # Saw some reduction... try again
+        return remove_duplicate_segments(best)
+
     return best
 
 
@@ -501,6 +500,7 @@ def main():
     processed_db_path = os.path.join(
         dataset_args.data_dir, dataset_args.processed_database)
 
+    @lru_cache(maxsize=1)
     def read_db():
         if not preprocess_args.overwrite and os.path.exists(processed_db_path):
             with open(processed_db_path) as fp:
@@ -558,6 +558,11 @@ def main():
                     # 'action': line['actionType'],
                 })
 
+        # Remove duplicate sponsor segments by choosing best (most votes)
+        print('Remove duplicate segments')
+        for key in db:
+            db[key] = remove_duplicate_segments(db[key])
+
         # We now remove whole videos from the list
         # Helps with obtaining "fully-labelled" videos
         min_date = datetime.strptime(preprocess_args.min_date, '%d/%m/%Y')
@@ -580,14 +585,7 @@ def main():
                 # Always include segments locked by VIPs, regardless of view count
                 del db[key]
 
-        num_segments = 0
-
-        # Remove duplicate sponsor segments by choosing best (most votes)
-        print('Remove duplicate segments')
-        for key in db:
-            db[key] = remove_duplicate_segments(db[key])
-            num_segments += len(db[key])
-        print('Saved', len(db), 'videos and', num_segments, 'segments')
+        print('Saved', len(db), 'videos')
 
         with open(processed_db_path, 'w') as fp:
             json.dump(db, fp)
@@ -613,7 +611,7 @@ def main():
             for video_id in video_ids
         )
 
-        print('start')
+        print('Downloading transcripts')
         with tqdm(total=len(video_ids)) as progress:
             def callback(task):
                 progress.set_description(f'Processing {task.args[0]}')
