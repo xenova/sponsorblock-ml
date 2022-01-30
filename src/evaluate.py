@@ -1,3 +1,7 @@
+import itertools
+import base64
+import re
+import requests
 from model import get_model_tokenizer
 from utils import jaccard
 from datasets import load_dataset
@@ -38,6 +42,13 @@ class EvaluationArguments(TrainingOutputArguments):
         default='metrics.csv',
         metadata={
             'help': 'Save metrics to output file'
+        }
+    )
+
+    channel_id: Optional[str] = field(
+        default=None,
+        metadata={
+            'help': 'Used to evaluate a channel'
         }
     )
 
@@ -138,6 +149,56 @@ def calculate_metrics(labelled_words, predictions):
     return metrics
 
 
+# Public innertube key (b64 encoded so that it is not incorrectly flagged)
+INNERTUBE_KEY = base64.b64decode(
+    b'QUl6YVN5QU9fRkoyU2xxVThRNFNURUhMR0NpbHdfWTlfMTFxY1c4').decode()
+
+YT_CONTEXT = {
+    'client': {
+        'userAgent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36,gzip(gfe)',
+        'clientName': 'WEB',
+        'clientVersion': '2.20211221.00.00',
+    }
+}
+_YT_INITIAL_DATA_RE = r'(?:window\s*\[\s*["\']ytInitialData["\']\s*\]|ytInitialData)\s*=\s*({.+?})\s*;\s*(?:var\s+meta|</script|\n)'
+
+
+def get_all_channel_vids(channel_id):
+    continuation = None
+    while True:
+        if continuation is None:
+            params = {'list': channel_id.replace('UC', 'UU', 1)}
+            response = requests.get(
+                'https://www.youtube.com/playlist', params=params)
+            items = json.loads(re.search(_YT_INITIAL_DATA_RE, response.text).group(1))['contents']['twoColumnBrowseResultsRenderer']['tabs'][0]['tabRenderer']['content'][
+                'sectionListRenderer']['contents'][0]['itemSectionRenderer']['contents'][0]['playlistVideoListRenderer']['contents']
+        else:
+            params = {'key': INNERTUBE_KEY}
+            data = {
+                'context': YT_CONTEXT,
+                'continuation': continuation
+            }
+            response = requests.post(
+                'https://www.youtube.com/youtubei/v1/browse', params=params, json=data)
+            items = response.json()[
+                'onResponseReceivedActions'][0]['appendContinuationItemsAction']['continuationItems']
+
+        new_token = None
+        for vid in items:
+            info = vid.get('playlistVideoRenderer')
+            if info:
+                yield info['videoId']
+                continue
+
+            info = vid.get('continuationItemRenderer')
+            if info:
+                new_token = info['continuationEndpoint']['continuationCommand']['token']
+
+        if new_token is None:
+            break
+        continuation = new_token
+
+
 def main():
     hf_parser = HfArgumentParser((
         EvaluationArguments,
@@ -162,15 +223,25 @@ def main():
 
     with open(final_path) as fp:
         final_data = json.load(fp)
+
+    if evaluation_args.channel_id is not None:
+        start = evaluation_args.start_index or 0
+        end = None if evaluation_args.max_videos is None else start + \
+            evaluation_args.max_videos
+
+        video_ids = list(itertools.islice(get_all_channel_vids(
+            evaluation_args.channel_id), start, end))
+        print('Found', len(video_ids), 'for channel', evaluation_args.channel_id)
+
+    else:
         video_ids = list(final_data.keys())
+        random.shuffle(video_ids)
 
-    random.shuffle(video_ids)
+        if evaluation_args.start_index is not None:
+            video_ids = video_ids[evaluation_args.start_index:]
 
-    if evaluation_args.start_index is not None:
-        video_ids = video_ids[evaluation_args.start_index:]
-
-    if evaluation_args.max_videos is not None:
-        video_ids = video_ids[:evaluation_args.max_videos]
+        if evaluation_args.max_videos is not None:
+            video_ids = video_ids[:evaluation_args.max_videos]
 
     # TODO option to choose categories
 
@@ -186,9 +257,11 @@ def main():
             for video_index, video_id in enumerate(progress):
 
                 progress.set_description(f'Processing {video_id}')
-                sponsor_segments = final_data.get(video_id, [])
+
+                sponsor_segments = final_data.get(video_id)
                 if not sponsor_segments:
-                    continue  # Ignore empty
+                    # TODO remove - parse using whole database
+                    continue
 
                 words = get_words(video_id)
                 if not words:
@@ -198,36 +271,42 @@ def main():
                 predictions = predict(video_id, model, tokenizer,
                                       segmentation_args, words, classifier_args)
 
-                labelled_words = add_labels_to_words(words, sponsor_segments)
-                met = calculate_metrics(labelled_words, predictions)
-                met['video_id'] = video_id
+                if sponsor_segments:
+                    labelled_words = add_labels_to_words(
+                        words, sponsor_segments)
+                    met = calculate_metrics(labelled_words, predictions)
+                    met['video_id'] = video_id
 
-                out_metrics.append(met)
+                    out_metrics.append(met)
 
-                total_accuracy += met['accuracy']
-                total_precision += met['precision']
-                total_recall += met['recall']
-                total_fscore += met['f-score']
+                    total_accuracy += met['accuracy']
+                    total_precision += met['precision']
+                    total_recall += met['recall']
+                    total_fscore += met['f-score']
 
-                progress.set_postfix({
-                    'accuracy': total_accuracy/len(out_metrics),
-                    'precision':  total_precision/len(out_metrics),
-                    'recall':  total_recall/len(out_metrics),
-                    'f-score': total_fscore/len(out_metrics)
-                })
+                    progress.set_postfix({
+                        'accuracy': total_accuracy/len(out_metrics),
+                        'precision':  total_precision/len(out_metrics),
+                        'recall':  total_recall/len(out_metrics),
+                        'f-score': total_fscore/len(out_metrics)
+                    })
 
-                labelled_predicted_segments = attach_predictions_to_sponsor_segments(
-                    predictions, sponsor_segments)
+                    labelled_predicted_segments = attach_predictions_to_sponsor_segments(
+                        predictions, sponsor_segments)
 
-                # Identify possible issues:
-                missed_segments = [
-                    prediction for prediction in predictions if prediction['best_sponsorship'] is None]
-                incorrect_segments = [
-                    seg for seg in labelled_predicted_segments if seg['best_prediction'] is None]
+                    # Identify possible issues:
+                    missed_segments = [
+                        prediction for prediction in predictions if prediction['best_sponsorship'] is None]
+                    incorrect_segments = [
+                        seg for seg in labelled_predicted_segments if seg['best_prediction'] is None]
+
+                else:
+                    # Not in database (all segments missed)
+                    missed_segments = predictions
+                    incorrect_segments = None
 
                 if missed_segments or incorrect_segments:
-                    print(
-                        f'Issues identified for https://youtu.be/{video_id} (#{video_index})')
+                    print(f'Issues identified for {video_id} (#{video_index})')
                     # Potentially missed segments (model predicted, but not in database)
                     if missed_segments:
                         print(' - Missed segments:')
