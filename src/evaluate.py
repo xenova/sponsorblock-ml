@@ -18,6 +18,7 @@ import json
 import os
 import random
 from shared import seconds_to_time
+from urllib.parse import quote
 
 
 @dataclass
@@ -225,11 +226,12 @@ def main():
                     seg for seg in labelled_predicted_segments if seg['best_prediction'] is None]
 
                 if missed_segments or incorrect_segments:
-                    print('Issues identified for',
-                          video_id, f'(#{video_index})')
+                    print(
+                        f'Issues identified for https://youtu.be/{video_id} (#{video_index})')
                     # Potentially missed segments (model predicted, but not in database)
                     if missed_segments:
                         print(' - Missed segments:')
+                        segments_to_submit = []
                         for i, missed_segment in enumerate(missed_segments, start=1):
                             print(f'\t#{i}:', seconds_to_time(
                                 missed_segment['start']), '-->', seconds_to_time(missed_segment['end']))
@@ -239,6 +241,16 @@ def main():
                                   missed_segment.get('category'))
                             print('\t\tProbability:',
                                   missed_segment.get('probability'))
+
+                            segments_to_submit.append({
+                                'segment': [missed_segment['start'], missed_segment['end']],
+                                'category': missed_segment['category'].lower(),
+                                'actionType': 'skip'
+                            })
+
+                        json_data = quote(json.dumps(segments_to_submit))
+                        print(
+                            f'\tSubmit: https://www.youtube.com/watch?v={video_id}#segments={json_data}')
 
                     # Potentially incorrect segments (model didn't predict, but in database)
                     if incorrect_segments:
