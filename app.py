@@ -47,18 +47,21 @@ def persistdata():
 prediction_cache = persistdata()
 
 MODELS = {
-    'Small (77M)': {
+    'Small (293 MB)': {
         'pretrained': 'google/t5-v1_1-small',
         'repo_id': 'Xenova/sponsorblock-small',
+        'num_parameters': '77M'
     },
-    'Base v1 (220M)': {
+    'Base v1 (850 MB)': {
         'pretrained': 't5-base',
-        'repo_id': 'EColi/sponsorblock-base-v1',
+        'repo_id': 'Xenova/sponsorblock-base-v1',
+        'num_parameters': '220M'
     },
 
-    'Base v1.1 (250M)': {
+    'Base v1.1 (944 MB)': {
         'pretrained': 'google/t5-v1_1-base',
-        'repo_id': 'Xenova/sponsorblock-base',
+        'repo_id': 'Xenova/sponsorblock-base-v1.1',
+        'num_parameters': '250M'
     }
 }
 
