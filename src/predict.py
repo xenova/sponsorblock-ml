@@ -1,12 +1,11 @@
 from utils import re_findall
-from shared import START_SEGMENT_TEMPLATE, END_SEGMENT_TEMPLATE, OutputArguments, device, seconds_to_time
+from shared import CustomTokens, START_SEGMENT_TEMPLATE, END_SEGMENT_TEMPLATE, OutputArguments, device, seconds_to_time
 from typing import Optional
 from segment import (
     generate_segments,
     extract_segment,
     MIN_SAFETY_TOKENS,
     SAFETY_TOKENS_PERCENTAGE,
-    CustomTokens,
     word_start,
     word_end,
     SegmentationArguments
