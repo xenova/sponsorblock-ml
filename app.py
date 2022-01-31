@@ -40,11 +40,17 @@ st.set_page_config(
 
 # Faster caching system for predictions (No need to hash)
 @st.cache(persist=True, allow_output_mutation=True)
-def persistdata():
+def create_prediction_cache():
     return {}
 
 
-prediction_cache = persistdata()
+@st.cache(persist=True, allow_output_mutation=True)
+def create_function_cache():
+    return {}
+
+
+prediction_cache = create_prediction_cache()
+prediction_function_cache = create_function_cache()
 
 MODELS = {
     'Small (293 MB)': {
@@ -100,23 +106,27 @@ def predict_function(model_id, model, tokenizer, segmentation_args, classifier_a
     return prediction_cache[model_id][video_id]
 
 
-@st.cache(persist=True, allow_output_mutation=True)
 def load_predict(model_id):
     model_info = MODELS[model_id]
 
-    # Use default segmentation and classification arguments
-    evaluation_args = EvaluationArguments(model_path=model_info['repo_id'])
-    segmentation_args = SegmentationArguments()
-    classifier_args = ClassifierArguments()
+    if model_id not in prediction_function_cache:
+        # Use default segmentation and classification arguments
+        evaluation_args = EvaluationArguments(model_path=model_info['repo_id'])
+        segmentation_args = SegmentationArguments()
+        classifier_args = ClassifierArguments()
 
-    model = AutoModelForSeq2SeqLM.from_pretrained(evaluation_args.model_path)
-    model.to(device())
+        model = AutoModelForSeq2SeqLM.from_pretrained(
+            evaluation_args.model_path)
+        model.to(device())
 
-    tokenizer = AutoTokenizer.from_pretrained(evaluation_args.model_path)
+        tokenizer = AutoTokenizer.from_pretrained(evaluation_args.model_path)
 
-    download_classifier(classifier_args)
+        download_classifier(classifier_args)
 
-    return partial(predict_function, model_id, model, tokenizer, segmentation_args, classifier_args)
+        prediction_function_cache[model_id] = partial(
+            predict_function, model_id, model, tokenizer, segmentation_args, classifier_args)
+
+    return prediction_function_cache[model_id]
 
 
 def main():
