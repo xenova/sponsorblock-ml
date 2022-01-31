@@ -19,6 +19,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'src
 from predict import SegmentationArguments, ClassifierArguments, predict as pred, seconds_to_time  # noqa
 from evaluate import EvaluationArguments
 from shared import device, CATGEGORY_OPTIONS
+from utils import regex_search
 
 st.set_page_config(
     page_title='SponsorBlock ML',
@@ -31,6 +32,34 @@ st.set_page_config(
         #  'About': "# This is a header. This is an *extremely* cool app!"
     }
 )
+
+
+YT_VIDEO_REGEX = r'''(?x)^
+                (
+                    # http(s):// or protocol-independent URL
+                    (?:https?://|//)
+                    (?:(?:(?:(?:\w+\.)?[yY][oO][uU][tT][uU][bB][eE](?:-nocookie|kids)?\.com/|
+                    youtube\.googleapis\.com/)                        # the various hostnames, with wildcard subdomains
+                    (?:.*?\#/)?                                          # handle anchor (#/) redirect urls
+                    (?:                                                  # the various things that can precede the ID:
+                        # v/ or embed/ or e/
+                        (?:(?:v|embed|e)/(?!videoseries))
+                        |(?:                                             # or the v= param in all its forms
+                            # preceding watch(_popup|.php) or nothing (like /?v=xxxx)
+                            (?:(?:watch|movie)(?:_popup)?(?:\.php)?/?)?
+                            (?:\?|\#!?)                                  # the params delimiter ? or # or #!
+                            # any other preceding param (like /?s=tuff&v=xxxx or ?s=tuff&amp;v=V36LpHqtcDY)
+                            (?:.*?[&;])??
+                            v=
+                        )
+                    ))
+                    |(?:
+                    youtu\.be                                        # just youtu.be/xxxx
+                    )/)
+                )?                                                       # all until now is optional -> you can pass the naked ID
+                # here is it! the YouTube video ID
+                (?P<id>[0-9A-Za-z_-]{11})'''
+
 # https://github.com/google-research/text-to-text-transfer-transformer#released-model-checkpoints
 # https://github.com/google-research/text-to-text-transfer-transformer/blob/main/released_checkpoints.md#experimental-t5-pre-trained-model-checkpoints
 
@@ -140,7 +169,7 @@ def main():
     # Load prediction function
     predict = load_predict(model_id)
 
-    video_id = st.text_input('Video ID:')  # , placeholder='e.g., axtQvkSpoto'
+    video_input = st.text_input('Video URL/ID:')  # , placeholder='e.g., axtQvkSpoto'
 
     categories = st.multiselect('Categories:',
                                 CATGEGORY_OPTIONS.keys(),
@@ -152,12 +181,14 @@ def main():
     confidence_threshold = st.slider(
         'Confidence Threshold (%):', min_value=0, max_value=100)
 
-    video_id_length = len(video_id)
-    if video_id_length == 0:
+    
+
+    if len(video_input) == 0: # No input, do not continue
         return
 
-    elif video_id_length != 11:
-        st.exception(ValueError('Invalid YouTube ID'))
+    video_id = regex_search(video_input, YT_VIDEO_REGEX)
+    if video_id is None:
+        st.exception(ValueError('Invalid YouTube URL/ID'))
         return
 
     with st.spinner('Running model...'):
