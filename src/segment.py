@@ -1,5 +1,4 @@
 import preprocess
-from shared import CustomTokens
 from dataclasses import dataclass, field
 
 

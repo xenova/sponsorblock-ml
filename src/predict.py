@@ -1,6 +1,5 @@
-from shared import START_SEGMENT_TEMPLATE, END_SEGMENT_TEMPLATE
 from utils import re_findall
-from shared import OutputArguments
+from shared import START_SEGMENT_TEMPLATE, END_SEGMENT_TEMPLATE, OutputArguments, device, seconds_to_time
 from typing import Optional
 from segment import (
     generate_segments,
@@ -15,19 +14,12 @@ from segment import (
 import preprocess
 from errors import TranscriptError
 from model import get_classifier_vectorizer, get_model_tokenizer
-from transformers import (
-    AutoModelForSeq2SeqLM,
-    AutoTokenizer,
-    HfArgumentParser
-)
+from transformers import HfArgumentParser
 from transformers.trainer_utils import get_last_checkpoint
 from dataclasses import dataclass, field
-from shared import device
 import logging
 
-import re
 
-from shared import seconds_to_time
 @dataclass
 class TrainingOutputArguments:
 

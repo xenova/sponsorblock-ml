@@ -4,14 +4,9 @@ import re
 import requests
 from model import get_model_tokenizer
 from utils import jaccard
-from datasets import load_dataset
-from transformers import (
-    AutoModelForSeq2SeqLM,
-    AutoTokenizer,
-    HfArgumentParser
-)
+from transformers import HfArgumentParser
 from preprocess import DatasetArguments, get_words
-from shared import device, GeneralArguments
+from shared import GeneralArguments
 from predict import ClassifierArguments, predict, TrainingOutputArguments
 from segment import extract_segment, word_start, word_end, SegmentationArguments, add_labels_to_words
 import pandas as pd

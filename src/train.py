@@ -1,6 +1,6 @@
 from preprocess import load_datasets, DatasetArguments
 from predict import ClassifierArguments, SEGMENT_MATCH_RE, CATEGORIES
-from shared import CustomTokens, device, GeneralArguments, OutputArguments
+from shared import CustomTokens, GeneralArguments, OutputArguments
 from model import ModelArguments
 import transformers
 import logging
@@ -14,9 +14,7 @@ from transformers import (
     DataCollatorForSeq2Seq,
     HfArgumentParser,
     Seq2SeqTrainer,
-    Seq2SeqTrainingArguments,
-    AutoTokenizer,
-    AutoModelForSeq2SeqLM
+    Seq2SeqTrainingArguments
 )
 
 from transformers.trainer_utils import get_last_checkpoint

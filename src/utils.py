@@ -1,14 +1,10 @@
 import re
-
 import os
 import signal
 import logging
-import sys
 from time import sleep, time
-from random import random, randint
 from multiprocessing import JoinableQueue, Event, Process
 from queue import Empty
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
