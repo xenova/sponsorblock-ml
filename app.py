@@ -159,82 +159,90 @@ def load_predict(model_id):
 
 
 def main():
+    top = st.container()
+    output = st.empty()
 
     # Display heading and subheading
-    st.write('# SponsorBlock ML')
-    st.write('##### Automatically detect in-video YouTube sponsorships, self/unpaid promotions, and interaction reminders.')
+    top.markdown('# SponsorBlock ML')
+    top.markdown('##### Automatically detect in-video YouTube sponsorships, self/unpaid promotions, and interaction reminders.')
 
-    model_id = st.selectbox('Select model', MODELS.keys(), index=0)
+    # Add controls
+    model_id = top.selectbox(
+        'Select model', MODELS.keys(), index=0, on_change=output.empty)
 
-    # Load prediction function
-    predict = load_predict(model_id)
+    video_input = top.text_input(
+        'Video URL/ID:', on_change=output.empty)
 
-    video_input = st.text_input('Video URL/ID:')
-
-    categories = st.multiselect('Categories:',
-                                CATGEGORY_OPTIONS.keys(),
-                                CATGEGORY_OPTIONS.keys(),
-                                format_func=CATGEGORY_OPTIONS.get
-                                )
+    categories = top.multiselect('Categories:',
+                                 CATGEGORY_OPTIONS.keys(),
+                                 CATGEGORY_OPTIONS.keys(),
+                                 format_func=CATGEGORY_OPTIONS.get, on_change=output.empty
+                                 )
 
     # Hide segments with a confidence lower than
-    confidence_threshold = st.slider(
-        'Confidence Threshold (%):', min_value=0, max_value=100)
+    confidence_threshold = top.slider(
+        'Confidence Threshold (%):', min_value=0, max_value=100, on_change=output.empty)
+
 
     if len(video_input) == 0:  # No input, do not continue
         return
 
-    video_id = regex_search(video_input, YT_VIDEO_REGEX)
-    if video_id is None:
-        st.exception(ValueError('Invalid YouTube URL/ID'))
-        return
+    # Load prediction function
+    with st.spinner('Loading model...'):
+        predict = load_predict(model_id)
 
-    with st.spinner('Running model...'):
-        predictions = predict(video_id)
+    with output.container(): # Place all content in output container
+        video_id = regex_search(video_input, YT_VIDEO_REGEX)
+        if video_id is None:
+            st.exception(ValueError('Invalid YouTube URL/ID'))
+            return
 
-    if len(predictions) == 0:
-        st.success('No segments found!')
-        return
+        with st.spinner('Running model...'):
+            predictions = predict(video_id)
 
-    submit_segments = []
-    for index, prediction in enumerate(predictions, start=1):
-        if prediction['category'] not in categories:
-            continue  # Skip
+        if len(predictions) == 0:
+            st.success('No segments found!')
+            return
 
-        confidence = prediction['probability'] * 100
+        submit_segments = []
+        for index, prediction in enumerate(predictions, start=1):
+            if prediction['category'] not in categories:
+                continue  # Skip
 
-        if confidence < confidence_threshold:
-            continue
+            confidence = prediction['probability'] * 100
 
-        submit_segments.append({
-            'segment': [prediction['start'], prediction['end']],
-            'category': prediction['category'].lower(),
-            'actionType': 'skip'
-        })
-        start_time = seconds_to_time(prediction['start'])
-        end_time = seconds_to_time(prediction['end'])
-        with st.expander(
-            f"[{prediction['category']}] Prediction #{index} ({start_time} \u2192 {end_time})"
-        ):
+            if confidence < confidence_threshold:
+                continue
 
-            url = f"https://www.youtube-nocookie.com/embed/{video_id}?&start={floor(prediction['start'])}&end={ceil(prediction['end'])}"
-            # autoplay=1controls=0&&modestbranding=1&fs=0
+            submit_segments.append({
+                'segment': [prediction['start'], prediction['end']],
+                'category': prediction['category'].lower(),
+                'actionType': 'skip'
+            })
+            start_time = seconds_to_time(prediction['start'])
+            end_time = seconds_to_time(prediction['end'])
+            with st.expander(
+                f"[{prediction['category']}] Prediction #{index} ({start_time} \u2192 {end_time})"
+            ):
 
-            # , width=None, height=None, scrolling=False
-            components.iframe(url, width=670, height=376)
+                url = f"https://www.youtube-nocookie.com/embed/{video_id}?&start={floor(prediction['start'])}&end={ceil(prediction['end'])}"
+                # autoplay=1controls=0&&modestbranding=1&fs=0
 
-            text = ' '.join(w['text'] for w in prediction['words'])
-            st.write(f"**Times:** {start_time} \u2192 {end_time}")
-            st.write(
-                f"**Category:** {CATGEGORY_OPTIONS[prediction['category']]}")
-            st.write(f"**Confidence:** {confidence:.2f}%")
-            st.write(f'**Text:** "{text}"')
+                # , width=None, height=None, scrolling=False
+                components.iframe(url, width=670, height=376)
 
-    json_data = quote(json.dumps(submit_segments))
-    link = f'[Submit Segments](https://www.youtube.com/watch?v={video_id}#segments={json_data})'
-    st.markdown(link, unsafe_allow_html=True)
-    wiki_link = '[Review generated segments before submitting!](https://wiki.sponsor.ajay.app/w/Automating_Submissions)'
-    st.markdown(wiki_link, unsafe_allow_html=True)
+                text = ' '.join(w['text'] for w in prediction['words'])
+                st.write(f"**Times:** {start_time} \u2192 {end_time}")
+                st.write(
+                    f"**Category:** {CATGEGORY_OPTIONS[prediction['category']]}")
+                st.write(f"**Confidence:** {confidence:.2f}%")
+                st.write(f'**Text:** "{text}"')
+
+        json_data = quote(json.dumps(submit_segments))
+        link = f'[Submit Segments](https://www.youtube.com/watch?v={video_id}#segments={json_data})'
+        st.markdown(link, unsafe_allow_html=True)
+        wiki_link = '[Review generated segments before submitting!](https://wiki.sponsor.ajay.app/w/Automating_Submissions)'
+        st.markdown(wiki_link, unsafe_allow_html=True)
 
 
 if __name__ == '__main__':
