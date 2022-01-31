@@ -2,10 +2,6 @@
 from functools import partial
 from math import ceil, floor
 import streamlit.components.v1 as components
-from transformers import (
-    AutoModelForSeq2SeqLM,
-    AutoTokenizer,
-)
 import streamlit as st
 import sys
 import os
@@ -20,6 +16,7 @@ from predict import SegmentationArguments, ClassifierArguments, predict as pred,
 from evaluate import EvaluationArguments
 from shared import device, CATGEGORY_OPTIONS
 from utils import regex_search
+from model import get_model_tokenizer
 
 st.set_page_config(
     page_title='SponsorBlock ML',
@@ -144,11 +141,7 @@ def load_predict(model_id):
         segmentation_args = SegmentationArguments()
         classifier_args = ClassifierArguments()
 
-        model = AutoModelForSeq2SeqLM.from_pretrained(
-            evaluation_args.model_path)
-        model.to(device())
-
-        tokenizer = AutoTokenizer.from_pretrained(evaluation_args.model_path)
+        model, tokenizer = get_model_tokenizer(evaluation_args.model_path)
 
         download_classifier(classifier_args)
 
