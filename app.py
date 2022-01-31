@@ -35,7 +35,7 @@ st.set_page_config(
 
 
 YT_VIDEO_REGEX = r'''(?x)^
-                (
+                (?:
                     # http(s):// or protocol-independent URL
                     (?:https?://|//)
                     (?:(?:(?:(?:\w+\.)?[yY][oO][uU][tT][uU][bB][eE](?:-nocookie|kids)?\.com/|
@@ -169,7 +169,7 @@ def main():
     # Load prediction function
     predict = load_predict(model_id)
 
-    video_input = st.text_input('Video URL/ID:')  # , placeholder='e.g., axtQvkSpoto'
+    video_input = st.text_input('Video URL/ID:')
 
     categories = st.multiselect('Categories:',
                                 CATGEGORY_OPTIONS.keys(),
@@ -181,9 +181,7 @@ def main():
     confidence_threshold = st.slider(
         'Confidence Threshold (%):', min_value=0, max_value=100)
 
-    
-
-    if len(video_input) == 0: # No input, do not continue
+    if len(video_input) == 0:  # No input, do not continue
         return
 
     video_id = regex_search(video_input, YT_VIDEO_REGEX)
