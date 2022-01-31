@@ -81,6 +81,7 @@ PROFANITY_RAW = '[ __ ]'  # How YouTube transcribes profanity
 PROFANITY_CONVERTED = '*****'  # Safer version for tokenizing
 
 
+# TODO add end time for words
 def get_auto_words(transcript_list):
     words = []
     transcript = transcript_list.find_generated_transcript(['en'])
@@ -139,13 +140,15 @@ def get_words(video_id, process=True, transcript_type='auto', fallback='manual',
             else:
                 words = get_auto_words(transcript_list)
 
-    except (TooManyRequests, YouTubeRequestFailed, requests.exceptions.ConnectionError) as e:  # Can retry
-        print(e)
+    except (TooManyRequests, YouTubeRequestFailed):
+        raise  # Cannot recover from these errors and do not mark as empty transcript
+
+    except requests.exceptions.ConnectionError:  # Can recover
         time.sleep(10)  # Timeout
         return get_words(video_id, process, transcript_type, fallback)
 
-    except CouldNotRetrieveTranscript:
-        pass
+    except CouldNotRetrieveTranscript:  # Retrying won't solve
+        pass  # Mark as empty transcript
 
     except json.decoder.JSONDecodeError:
         print('JSONDecodeError for', video_id)
