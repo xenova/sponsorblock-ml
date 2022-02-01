@@ -17,13 +17,14 @@ from transformers import HfArgumentParser
 from transformers.trainer_utils import get_last_checkpoint
 from dataclasses import dataclass, field
 import logging
+import os
 
 
 @dataclass
 class TrainingOutputArguments:
 
     model_path: str = field(
-        default=None,
+        default='Xenova/sponsorblock-small',
         metadata={
             'help': 'Path to pretrained model used for prediction'
         }
@@ -36,12 +37,13 @@ class TrainingOutputArguments:
         if self.model_path is not None:
             return
 
-        last_checkpoint = get_last_checkpoint(self.output_dir)
-        if last_checkpoint is not None:
-            self.model_path = last_checkpoint
-        else:
-            raise Exception(
-                'Unable to find model, explicitly set `--model_path`')
+        if os.path.exists(self.output_dir):
+            last_checkpoint = get_last_checkpoint(self.output_dir)
+            if last_checkpoint is not None:
+                self.model_path = last_checkpoint
+                return
+
+        raise Exception('Unable to find model, explicitly set `--model_path`')
 
 
 @dataclass
