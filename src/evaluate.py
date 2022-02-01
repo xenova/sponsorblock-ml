@@ -205,7 +205,7 @@ def main():
 
     evaluation_args, dataset_args, segmentation_args, classifier_args, _ = hf_parser.parse_args_into_dataclasses()
 
-    model, tokenizer = get_model_tokenizer(evaluation_args.model_path)
+    model, tokenizer = get_model_tokenizer(evaluation_args.model_path, evaluation_args.cache_dir)
 
     # # TODO find better way of evaluating videos not trained on
     # dataset = load_dataset('json', data_files=os.path.join(
@@ -313,8 +313,9 @@ def main():
                                 [w['text'] for w in missed_segment['words']]), '"', sep='')
                             print('\t\tCategory:',
                                   missed_segment.get('category'))
-                            print('\t\tProbability:',
-                                  missed_segment.get('probability'))
+                            if 'probability' in missed_segment:
+                                print('\t\tProbability:',
+                                      missed_segment['probability'])
 
                             segments_to_submit.append({
                                 'segment': [missed_segment['start'], missed_segment['end']],

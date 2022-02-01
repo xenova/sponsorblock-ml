@@ -11,8 +11,8 @@ from segment import (
     SegmentationArguments
 )
 import preprocess
-from errors import TranscriptError, ModelLoadError
-from model import get_classifier_vectorizer, get_model_tokenizer
+from errors import TranscriptError, ModelLoadError, ClassifierLoadError
+from model import ModelArguments, get_classifier_vectorizer, get_model_tokenizer
 from transformers import HfArgumentParser
 from transformers.trainer_utils import get_last_checkpoint
 from dataclasses import dataclass, field
@@ -29,6 +29,7 @@ class TrainingOutputArguments:
             'help': 'Path to pretrained model used for prediction'
         }
     )
+    cache_dir: Optional[str] = ModelArguments.__dataclass_fields__['cache_dir']
 
     output_dir: Optional[str] = OutputArguments.__dataclass_fields__[
         'output_dir']
@@ -43,7 +44,8 @@ class TrainingOutputArguments:
                 self.model_path = last_checkpoint
                 return
 
-        raise ModelLoadError('Unable to find model, explicitly set `--model_path`')
+        raise ModelLoadError(
+            'Unable to find model, explicitly set `--model_path`')
 
 
 @dataclass
@@ -65,6 +67,13 @@ MERGE_TIME_WITHIN = 8   # Merge predictions if they are within x seconds
 
 @dataclass(frozen=True, eq=True)
 class ClassifierArguments:
+    classifier_model: Optional[str] = field(
+        default='Xenova/sponsorblock-classifier',
+        metadata={
+            'help': 'Use a pretrained classifier'
+        }
+    )
+
     classifier_dir: Optional[str] = field(
         default='classifiers',
         metadata={
@@ -90,7 +99,6 @@ class ClassifierArguments:
         default=0.5, metadata={'help': 'Remove all predictions whose classification probability is below this threshold.'})
 
 
-# classifier, vectorizer,
 def filter_and_add_probabilities(predictions, classifier_args):
     """Use classifier to filter predictions"""
     if not predictions:
@@ -160,8 +168,11 @@ def predict(video_id, model, tokenizer, segmentation_args, words=None, classifie
 
     # TODO add back
     if classifier_args is not None:
-        predictions = filter_and_add_probabilities(
-            predictions, classifier_args)
+        try:
+            predictions = filter_and_add_probabilities(
+                predictions, classifier_args)
+        except ClassifierLoadError:
+            print('Unable to load classifer')
 
     return predictions
 
@@ -290,7 +301,7 @@ def main():
         print('No video ID supplied. Use `--video_id`.')
         return
 
-    model, tokenizer = get_model_tokenizer(predict_args.model_path)
+    model, tokenizer = get_model_tokenizer(predict_args.model_path, predict_args.cache_dir)
 
     predict_args.video_id = predict_args.video_id.strip()
     predictions = predict(predict_args.video_id, model, tokenizer,
@@ -308,8 +319,9 @@ def main():
               ' '.join([w['text'] for w in prediction['words']]), '"', sep='')
         print('Time:', seconds_to_time(
             prediction['start']), '\u2192', seconds_to_time(prediction['end']))
-        print('Probability:', prediction.get('probability'))
         print('Category:', prediction.get('category'))
+        if 'probability' in prediction:
+            print('Probability:', prediction['probability'])
         print()
 
 
