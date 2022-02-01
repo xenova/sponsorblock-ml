@@ -305,6 +305,9 @@ class PreprocessArguments:
         default='27/01/2022',
         metadata={'help': 'Only use videos that have some segment from before this date (exclusive). This allows for videos to have segments be corrected, but ignores new videos (posted after this date) to enter the pool.'})
 
+    do_process_database: bool = field(
+        default=False, metadata={'help': 'Process the raw database'}
+    )
     do_transcribe: bool = field(
         default=False, metadata={'help': 'Get transcripts for videos'}
     )
@@ -588,12 +591,17 @@ def main():
                 # Always include segments locked by VIPs, regardless of view count
                 del db[key]
 
+            # TODO remove videos that contain a full-video label?
+
         print('Saved', len(db), 'videos')
 
         with open(processed_db_path, 'w') as fp:
             json.dump(db, fp)
 
         return db
+
+    if preprocess_args.do_process_database:
+        read_db()
 
     # 'videoID', 'startTime', 'endTime', 'votes', 'locked', 'incorrectVotes', 'UUID',
     # 'userID', 'timeSubmitted', 'views', 'category', 'actionType', 'service', 'videoDuration',
