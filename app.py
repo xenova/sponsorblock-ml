@@ -7,16 +7,15 @@ import sys
 import os
 import json
 from urllib.parse import quote
-from huggingface_hub import hf_hub_download
 
 # Allow direct execution
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'src'))  # noqa
 
-from predict import SegmentationArguments, ClassifierArguments, predict as pred, seconds_to_time  # noqa
+from predict import SegmentationArguments, ClassifierArguments, predict as pred  # noqa
 from evaluate import EvaluationArguments
-from shared import device, CATGEGORY_OPTIONS
+from shared import seconds_to_time, CATGEGORY_OPTIONS
 from utils import regex_search
-from model import get_model_tokenizer
+from model import get_model_tokenizer, get_classifier_vectorizer
 
 st.set_page_config(
     page_title='SponsorBlock ML',
@@ -106,22 +105,6 @@ for m in MODELS:
 CLASSIFIER_PATH = 'Xenova/sponsorblock-classifier'
 
 
-@st.cache(persist=True, allow_output_mutation=True)
-def download_classifier(classifier_args):
-    # Save classifier and vectorizer
-    hf_hub_download(repo_id=CLASSIFIER_PATH,
-                    filename=classifier_args.classifier_file,
-                    cache_dir=classifier_args.classifier_dir,
-                    force_filename=classifier_args.classifier_file,
-                    )
-    hf_hub_download(repo_id=CLASSIFIER_PATH,
-                    filename=classifier_args.vectorizer_file,
-                    cache_dir=classifier_args.classifier_dir,
-                    force_filename=classifier_args.vectorizer_file,
-                    )
-    return True
-
-
 def predict_function(model_id, model, tokenizer, segmentation_args, classifier_args, video_id):
     if video_id not in prediction_cache[model_id]:
         prediction_cache[model_id][video_id] = pred(
@@ -139,11 +122,10 @@ def load_predict(model_id):
         # Use default segmentation and classification arguments
         evaluation_args = EvaluationArguments(model_path=model_info['repo_id'])
         segmentation_args = SegmentationArguments()
-        classifier_args = ClassifierArguments()
+        classifier_args = ClassifierArguments(
+            min_probability=0)  # Filtering done later
 
         model, tokenizer = get_model_tokenizer(evaluation_args.model_path)
-
-        download_classifier(classifier_args)
 
         prediction_function_cache[model_id] = partial(
             predict_function, model_id, model, tokenizer, segmentation_args, classifier_args)
@@ -157,7 +139,8 @@ def main():
 
     # Display heading and subheading
     top.markdown('# SponsorBlock ML')
-    top.markdown('##### Automatically detect in-video YouTube sponsorships, self/unpaid promotions, and interaction reminders.')
+    top.markdown(
+        '##### Automatically detect in-video YouTube sponsorships, self/unpaid promotions, and interaction reminders.')
 
     # Add controls
     model_id = top.selectbox(
@@ -174,8 +157,7 @@ def main():
 
     # Hide segments with a confidence lower than
     confidence_threshold = top.slider(
-        'Confidence Threshold (%):', min_value=0, max_value=100, on_change=output.empty)
-
+        'Confidence Threshold (%):', min_value=0, value=50, max_value=100, on_change=output.empty)
 
     if len(video_input) == 0:  # No input, do not continue
         return
@@ -184,7 +166,7 @@ def main():
     with st.spinner('Loading model...'):
         predict = load_predict(model_id)
 
-    with output.container(): # Place all content in output container
+    with output.container():  # Place all content in output container
         video_id = regex_search(video_input, YT_VIDEO_REGEX)
         if video_id is None:
             st.exception(ValueError('Invalid YouTube URL/ID'))
