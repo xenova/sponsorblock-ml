@@ -11,7 +11,7 @@ from segment import (
     SegmentationArguments
 )
 import preprocess
-from errors import TranscriptError
+from errors import TranscriptError, ModelLoadError
 from model import get_classifier_vectorizer, get_model_tokenizer
 from transformers import HfArgumentParser
 from transformers.trainer_utils import get_last_checkpoint
@@ -43,7 +43,7 @@ class TrainingOutputArguments:
                 self.model_path = last_checkpoint
                 return
 
-        raise Exception('Unable to find model, explicitly set `--model_path`')
+        raise ModelLoadError('Unable to find model, explicitly set `--model_path`')
 
 
 @dataclass
