@@ -1,3 +1,14 @@
+import itertools
+import base64
+import re
+import requests
+import json
+from transformers import HfArgumentParser
+from transformers.trainer_utils import get_last_checkpoint
+from dataclasses import dataclass, field
+import logging
+import os
+import itertools
 from utils import re_findall
 from shared import CustomTokens, START_SEGMENT_TEMPLATE, END_SEGMENT_TEMPLATE, OutputArguments, device, seconds_to_time
 from typing import Optional
@@ -11,17 +22,62 @@ from segment import (
     SegmentationArguments
 )
 import preprocess
-from errors import TranscriptError, ModelLoadError, ClassifierLoadError
+from errors import PredictionException, TranscriptError, ModelLoadError, ClassifierLoadError
 from model import ModelArguments, get_classifier_vectorizer, get_model_tokenizer
-from transformers import HfArgumentParser
-from transformers.trainer_utils import get_last_checkpoint
-from dataclasses import dataclass, field
-import logging
-import os
+
+
+# Public innertube key (b64 encoded so that it is not incorrectly flagged)
+INNERTUBE_KEY = base64.b64decode(
+    b'QUl6YVN5QU9fRkoyU2xxVThRNFNURUhMR0NpbHdfWTlfMTFxY1c4').decode()
+
+YT_CONTEXT = {
+    'client': {
+        'userAgent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36,gzip(gfe)',
+        'clientName': 'WEB',
+        'clientVersion': '2.20211221.00.00',
+    }
+}
+_YT_INITIAL_DATA_RE = r'(?:window\s*\[\s*["\']ytInitialData["\']\s*\]|ytInitialData)\s*=\s*({.+?})\s*;\s*(?:var\s+meta|</script|\n)'
+
+
+def get_all_channel_vids(channel_id):
+    continuation = None
+    while True:
+        if continuation is None:
+            params = {'list': channel_id.replace('UC', 'UU', 1)}
+            response = requests.get(
+                'https://www.youtube.com/playlist', params=params)
+            items = json.loads(re.search(_YT_INITIAL_DATA_RE, response.text).group(1))['contents']['twoColumnBrowseResultsRenderer']['tabs'][0]['tabRenderer']['content'][
+                'sectionListRenderer']['contents'][0]['itemSectionRenderer']['contents'][0]['playlistVideoListRenderer']['contents']
+        else:
+            params = {'key': INNERTUBE_KEY}
+            data = {
+                'context': YT_CONTEXT,
+                'continuation': continuation
+            }
+            response = requests.post(
+                'https://www.youtube.com/youtubei/v1/browse', params=params, json=data)
+            items = response.json()[
+                'onResponseReceivedActions'][0]['appendContinuationItemsAction']['continuationItems']
+
+        new_token = None
+        for vid in items:
+            info = vid.get('playlistVideoRenderer')
+            if info:
+                yield info['videoId']
+                continue
+
+            info = vid.get('continuationItemRenderer')
+            if info:
+                new_token = info['continuationEndpoint']['continuationCommand']['token']
+
+        if new_token is None:
+            break
+        continuation = new_token
 
 
 @dataclass
-class TrainingOutputArguments:
+class InferenceArguments:
 
     model_path: str = field(
         default='Xenova/sponsorblock-small',
@@ -34,27 +90,69 @@ class TrainingOutputArguments:
     output_dir: Optional[str] = OutputArguments.__dataclass_fields__[
         'output_dir']
 
+    max_videos: Optional[int] = field(
+        default=None,
+        metadata={
+            'help': 'The number of videos to test on'
+        }
+    )
+    start_index: int = field(default=None, metadata={
+        'help': 'Video to start the evaluation at.'})
+    channel_id: Optional[str] = field(
+        default=None,
+        metadata={
+            'help': 'Used to evaluate a channel'
+        }
+    )
+    video_ids: str = field(
+        default_factory=lambda: [],
+        metadata={
+            'nargs': '+'
+        }
+    )
+
     def __post_init__(self):
-        if self.model_path is not None:
-            return
+        # Try to load model from latest checkpoint
+        if self.model_path is None:
+            if os.path.exists(self.output_dir):
+                last_checkpoint = get_last_checkpoint(self.output_dir)
+                if last_checkpoint is not None:
+                    self.model_path = last_checkpoint
+                else:
+                    raise ModelLoadError(
+                        'Unable to load model from checkpoint, explicitly set `--model_path`')
+            else:
+                raise ModelLoadError(
+                    f'Unable to find model in {self.output_dir}, explicitly set `--model_path`')
 
-        if os.path.exists(self.output_dir):
-            last_checkpoint = get_last_checkpoint(self.output_dir)
-            if last_checkpoint is not None:
-                self.model_path = last_checkpoint
-                return
+        if any(len(video_id) != 11 for video_id in self.video_ids):
+            raise PredictionException('Invalid video IDs (length not 11)')
 
-        raise ModelLoadError(
-            'Unable to find model, explicitly set `--model_path`')
+        if self.channel_id is not None:
+            start = self.start_index or 0
+            end = None if self.max_videos is None else start + self.max_videos
+
+            channel_video_ids = list(itertools.islice(get_all_channel_vids(
+                self.channel_id), start, end))
+            print('Found', len(channel_video_ids),
+                  'for channel', self.channel_id)
+
+            self.video_ids += channel_video_ids
 
 
 @dataclass
-class PredictArguments(TrainingOutputArguments):
+class PredictArguments(InferenceArguments):
     video_id: str = field(
         default=None,
         metadata={
-            'help': 'Video to predict sponsorship segments for'}
+            'help': 'Video to predict segments for'}
     )
+
+    def __post_init__(self):
+        if self.video_id is not None:
+            self.video_ids.append(self.video_id)
+
+        super().__post_init__()
 
 
 _SEGMENT_START = START_SEGMENT_TEMPLATE.format(r'(?P<category>\w+)')
@@ -297,31 +395,37 @@ def main():
     ))
     predict_args, segmentation_args, classifier_args = hf_parser.parse_args_into_dataclasses()
 
-    if predict_args.video_id is None:
-        print('No video ID supplied. Use `--video_id`.')
+    if not predict_args.video_ids:
+        print('No video IDs supplied. Use `--video_id`, `--video_ids`, or `--channel_id`.')
         return
 
-    model, tokenizer = get_model_tokenizer(predict_args.model_path, predict_args.cache_dir)
+    model, tokenizer = get_model_tokenizer(
+        predict_args.model_path, predict_args.cache_dir)
 
-    predict_args.video_id = predict_args.video_id.strip()
-    predictions = predict(predict_args.video_id, model, tokenizer,
-                          segmentation_args, classifier_args=classifier_args)
+    for video_id in predict_args.video_ids:
+        video_id = video_id.strip()
+        try:
+            predictions = predict(video_id, model, tokenizer,
+                                  segmentation_args, classifier_args=classifier_args)
+        except TranscriptError:
+            print('No transcript available for', video_id, end='\n\n')
+            continue
+        video_url = f'https://www.youtube.com/watch?v={video_id}'
+        if not predictions:
+            print('No predictions found for', video_url, end='\n\n')
+            continue
 
-    video_url = f'https://www.youtube.com/watch?v={predict_args.video_id}'
-    if not predictions:
-        print('No predictions found for', video_url)
-        return
-
-    print(len(predictions), 'predictions found for', video_url)
-    for index, prediction in enumerate(predictions, start=1):
-        print(f'Prediction #{index}:')
-        print('Text: "',
-              ' '.join([w['text'] for w in prediction['words']]), '"', sep='')
-        print('Time:', seconds_to_time(
-            prediction['start']), '\u2192', seconds_to_time(prediction['end']))
-        print('Category:', prediction.get('category'))
-        if 'probability' in prediction:
-            print('Probability:', prediction['probability'])
+        print(len(predictions), 'predictions found for', video_url)
+        for index, prediction in enumerate(predictions, start=1):
+            print(f'Prediction #{index}:')
+            print('Text: "',
+                  ' '.join([w['text'] for w in prediction['words']]), '"', sep='')
+            print('Time:', seconds_to_time(
+                prediction['start']), '\u2192', seconds_to_time(prediction['end']))
+            print('Category:', prediction.get('category'))
+            if 'probability' in prediction:
+                print('Probability:', prediction['probability'])
+            print()
         print()
 
 

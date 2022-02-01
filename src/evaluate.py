@@ -1,13 +1,10 @@
-import itertools
-import base64
-import re
-import requests
+
 from model import get_model_tokenizer
 from utils import jaccard
 from transformers import HfArgumentParser
 from preprocess import DatasetArguments, get_words
 from shared import GeneralArguments
-from predict import ClassifierArguments, predict, TrainingOutputArguments
+from predict import ClassifierArguments, predict, InferenceArguments
 from segment import extract_segment, word_start, word_end, SegmentationArguments, add_labels_to_words
 import pandas as pd
 from dataclasses import dataclass, field
@@ -21,29 +18,12 @@ from urllib.parse import quote
 
 
 @dataclass
-class EvaluationArguments(TrainingOutputArguments):
-    """
-    Arguments pertaining to which model/config/tokenizer we are going to fine-tune from.
-    """
-    max_videos: Optional[int] = field(
-        default=None,
-        metadata={
-            'help': 'The number of videos to test on'
-        }
-    )
-    start_index: int = field(default=None, metadata={
-        'help': 'Video to start the evaluation at.'})
+class EvaluationArguments(InferenceArguments):
+    """Arguments pertaining to how evaluation will occur."""
     output_file: Optional[str] = field(
         default='metrics.csv',
         metadata={
             'help': 'Save metrics to output file'
-        }
-    )
-
-    channel_id: Optional[str] = field(
-        default=None,
-        metadata={
-            'help': 'Used to evaluate a channel'
         }
     )
 
@@ -144,56 +124,6 @@ def calculate_metrics(labelled_words, predictions):
     return metrics
 
 
-# Public innertube key (b64 encoded so that it is not incorrectly flagged)
-INNERTUBE_KEY = base64.b64decode(
-    b'QUl6YVN5QU9fRkoyU2xxVThRNFNURUhMR0NpbHdfWTlfMTFxY1c4').decode()
-
-YT_CONTEXT = {
-    'client': {
-        'userAgent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36,gzip(gfe)',
-        'clientName': 'WEB',
-        'clientVersion': '2.20211221.00.00',
-    }
-}
-_YT_INITIAL_DATA_RE = r'(?:window\s*\[\s*["\']ytInitialData["\']\s*\]|ytInitialData)\s*=\s*({.+?})\s*;\s*(?:var\s+meta|</script|\n)'
-
-
-def get_all_channel_vids(channel_id):
-    continuation = None
-    while True:
-        if continuation is None:
-            params = {'list': channel_id.replace('UC', 'UU', 1)}
-            response = requests.get(
-                'https://www.youtube.com/playlist', params=params)
-            items = json.loads(re.search(_YT_INITIAL_DATA_RE, response.text).group(1))['contents']['twoColumnBrowseResultsRenderer']['tabs'][0]['tabRenderer']['content'][
-                'sectionListRenderer']['contents'][0]['itemSectionRenderer']['contents'][0]['playlistVideoListRenderer']['contents']
-        else:
-            params = {'key': INNERTUBE_KEY}
-            data = {
-                'context': YT_CONTEXT,
-                'continuation': continuation
-            }
-            response = requests.post(
-                'https://www.youtube.com/youtubei/v1/browse', params=params, json=data)
-            items = response.json()[
-                'onResponseReceivedActions'][0]['appendContinuationItemsAction']['continuationItems']
-
-        new_token = None
-        for vid in items:
-            info = vid.get('playlistVideoRenderer')
-            if info:
-                yield info['videoId']
-                continue
-
-            info = vid.get('continuationItemRenderer')
-            if info:
-                new_token = info['continuationEndpoint']['continuationCommand']['token']
-
-        if new_token is None:
-            break
-        continuation = new_token
-
-
 def main():
     hf_parser = HfArgumentParser((
         EvaluationArguments,
@@ -205,30 +135,25 @@ def main():
 
     evaluation_args, dataset_args, segmentation_args, classifier_args, _ = hf_parser.parse_args_into_dataclasses()
 
-    model, tokenizer = get_model_tokenizer(evaluation_args.model_path, evaluation_args.cache_dir)
-
-    # # TODO find better way of evaluating videos not trained on
-    # dataset = load_dataset('json', data_files=os.path.join(
-    #     dataset_args.data_dir, dataset_args.validation_file))['train']
-    # video_ids = [row['video_id'] for row in dataset]
-
     # Load labelled data:
     final_path = os.path.join(
-        dataset_args.data_dir, dataset_args.processed_file)
+        dataset_args.data_dir, dataset_args.processed_database)
+
+    if not os.path.exists(final_path):
+        print('ERROR: Processed database not found.',
+              f'Run `python src/preprocess.py --update_database --do_process_database` to generate "{final_path}".')
+        return
+
+    model, tokenizer = get_model_tokenizer(
+        evaluation_args.model_path, evaluation_args.cache_dir)
 
     with open(final_path) as fp:
         final_data = json.load(fp)
 
-    if evaluation_args.channel_id is not None:
-        start = evaluation_args.start_index or 0
-        end = None if evaluation_args.max_videos is None else start + \
-            evaluation_args.max_videos
+    if evaluation_args.video_ids:  # Use specified
+        video_ids = evaluation_args.video_ids
 
-        video_ids = list(itertools.islice(get_all_channel_vids(
-            evaluation_args.channel_id), start, end))
-        print('Found', len(video_ids), 'for channel', evaluation_args.channel_id)
-
-    else:
+    else:  # Use items found in preprocessed database
         video_ids = list(final_data.keys())
         random.shuffle(video_ids)
 
@@ -255,7 +180,7 @@ def main():
 
                 sponsor_segments = final_data.get(video_id)
                 if not sponsor_segments:
-                    # TODO remove - parse using whole database
+                    print('No labels found for', video_id)
                     continue
 
                 words = get_words(video_id)
