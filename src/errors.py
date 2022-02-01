@@ -21,3 +21,8 @@ class ModelError(SponsorBlockException):
 class ModelLoadError(ModelError):
     """An exception occurred while loading the model"""
     pass
+
+
+class ClassifierLoadError(ModelError):
+    """An exception occurred while loading the classifier"""
+    pass
