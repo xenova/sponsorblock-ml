@@ -1,5 +1,7 @@
+from huggingface_hub import hf_hub_download
 from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 from shared import CustomTokens, device
+from errors import ClassifierLoadError, ModelLoadError
 from functools import lru_cache
 import pickle
 import os
@@ -29,7 +31,7 @@ class ModelArguments:
     #     }
     # )
     cache_dir: Optional[str] = field(
-        default=None,
+        default='models',
         metadata={
             'help': 'Where to store the pretrained models downloaded from huggingface.co'
         },
@@ -63,13 +65,27 @@ class ModelArguments:
 
 @lru_cache(maxsize=None)
 def get_classifier_vectorizer(classifier_args):
+    # Classifier
     classifier_path = os.path.join(
         classifier_args.classifier_dir, classifier_args.classifier_file)
+    if not os.path.exists(classifier_path):
+        hf_hub_download(repo_id=classifier_args.classifier_model,
+                        filename=classifier_args.classifier_file,
+                        cache_dir=classifier_args.classifier_dir,
+                        force_filename=classifier_args.classifier_file,
+                        )
     with open(classifier_path, 'rb') as fp:
         classifier = pickle.load(fp)
 
+    # Vectorizer
     vectorizer_path = os.path.join(
         classifier_args.classifier_dir, classifier_args.vectorizer_file)
+    if not os.path.exists(vectorizer_path):
+        hf_hub_download(repo_id=classifier_args.classifier_model,
+                        filename=classifier_args.vectorizer_file,
+                        cache_dir=classifier_args.classifier_dir,
+                        force_filename=classifier_args.vectorizer_file,
+                        )
     with open(vectorizer_path, 'rb') as fp:
         vectorizer = pickle.load(fp)
 
@@ -79,10 +95,11 @@ def get_classifier_vectorizer(classifier_args):
 @lru_cache(maxsize=None)
 def get_model_tokenizer(model_name_or_path, cache_dir=None):
     if model_name_or_path is None:
-        raise ValueError('Invalid model_name_or_path.')
+        raise ModelLoadError('Invalid model_name_or_path.')
 
     # Load pretrained model and tokenizer
-    model = AutoModelForSeq2SeqLM.from_pretrained(model_name_or_path, cache_dir=cache_dir)
+    model = AutoModelForSeq2SeqLM.from_pretrained(
+        model_name_or_path, cache_dir=cache_dir)
     model.to(device())
 
     tokenizer = AutoTokenizer.from_pretrained(
