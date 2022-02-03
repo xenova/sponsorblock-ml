@@ -52,12 +52,14 @@ def word_end(word):
 def generate_segments(words, tokenizer, segmentation_args):
     first_pass_segments = []
 
-    for index, word in enumerate(words):
-        # Get length of tokenized word
-        word['cleaned'] = preprocess.clean_text(word['text'])
-        word['num_tokens'] = len(
-            tokenizer(word['cleaned'], add_special_tokens=False, truncation=True).input_ids)
+    cleaned_words_list = []
+    for w in words:
+        w['cleaned'] = preprocess.clean_text(w['text'])
+        cleaned_words_list.append(w['cleaned'])
 
+    # Get lengths of tokenized words
+    num_tokens_list = tokenizer(cleaned_words_list, add_special_tokens=False, truncation=True, return_attention_mask=False, return_length=True).length
+    for index, (word, num_tokens) in enumerate(zip(words, num_tokens_list)):
         # Add new segment
         if index == 0 or word_start(words[index]) - word_end(words[index-1]) >= segmentation_args.pause_threshold:
             first_pass_segments.append([word])
@@ -78,7 +80,7 @@ def generate_segments(words, tokenizer, segmentation_args):
 
         for word in segment:
             new_seg = current_segment_num_tokens + \
-                word['num_tokens'] >= max_q_size
+                num_tokens >= max_q_size
             if new_seg:
                 # Adding this token would make it have too many tokens
                 # We save this batch and create new
@@ -86,7 +88,7 @@ def generate_segments(words, tokenizer, segmentation_args):
 
             # Add tokens to current segment
             current_segment.append(word)
-            current_segment_num_tokens += word['num_tokens']
+            current_segment_num_tokens += num_tokens
 
             if not new_seg:
                 continue
@@ -94,7 +96,7 @@ def generate_segments(words, tokenizer, segmentation_args):
             # Just created a new segment, so we remove until we only have buffer_size tokens
             last_index = 0
             while current_segment_num_tokens > buffer_size and current_segment:
-                current_segment_num_tokens -= current_segment[last_index]['num_tokens']
+                current_segment_num_tokens -= num_tokens_list[last_index]
                 last_index += 1
 
             current_segment = current_segment[last_index:]
@@ -102,19 +104,14 @@ def generate_segments(words, tokenizer, segmentation_args):
         if current_segment:  # Add remaining segment
             second_pass_segments.append(current_segment)
 
-    # Cleaning up, delete 'num_tokens' from each word
-    # for segment in second_pass_segments:
-    for word in words:
-        word.pop('num_tokens', None)
-
     return second_pass_segments
 
 
 def extract_segment(words, start, end, map_function=None):
     """Extracts all words with time in [start, end]"""
 
-    a = binary_search(words, 0, len(words), start, True)
-    b = min(binary_search(words, 0, len(words), end, False) + 1, len(words))
+    a = binary_search_below(words, 0, len(words) - 1, start)
+    b = min(binary_search_above(words, 0, len(words) - 1, end) + 1 , len(words))
 
     to_transform = map_function is not None and callable(map_function)
 
@@ -123,18 +120,33 @@ def extract_segment(words, start, end, map_function=None):
     ]
 
 
-def binary_search(words, start_index, end_index, time, below):
-    """Binary search to get first index of word whose start/end time is greater/less than some value"""
+def avg(*items):
+    return sum(items)/len(items)
+
+
+def binary_search_below(transcript, start_index, end_index, time):
     if start_index >= end_index:
         return end_index
 
     middle_index = (start_index + end_index) // 2
+    middle = transcript[middle_index]
+    middle_time = avg(middle['start'], middle['end'])
 
-    middle_time = word_start(
-        words[middle_index]) if below else word_end(words[middle_index])
-
-    # TODO if above: if time < middle_time binary_search(start, middle-1)
     if time <= middle_time:
-        return binary_search(words, start_index, middle_index, time, below)
+        return binary_search_below(transcript, start_index, middle_index, time)
     else:
-        return binary_search(words, middle_index + 1, end_index, time, below)
+        return binary_search_below(transcript, middle_index + 1, end_index, time)
+
+
+def binary_search_above(transcript, start_index, end_index, time):
+    if start_index >= end_index:
+        return end_index
+
+    middle_index = (start_index + end_index + 1) // 2
+    middle = transcript[middle_index]
+    middle_time = avg(middle['start'], middle['end'])
+
+    if time >= middle_time:
+        return binary_search_above(transcript, middle_index, end_index, time)
+    else:
+        return binary_search_above(transcript, start_index, middle_index - 1, time)
