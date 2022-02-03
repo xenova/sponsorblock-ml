@@ -58,8 +58,12 @@ def generate_segments(words, tokenizer, segmentation_args):
         cleaned_words_list.append(w['cleaned'])
 
     # Get lengths of tokenized words
-    num_tokens_list = tokenizer(cleaned_words_list, add_special_tokens=False, truncation=True, return_attention_mask=False, return_length=True).length
+    num_tokens_list = tokenizer(cleaned_words_list, add_special_tokens=False,
+                                truncation=True, return_attention_mask=False, return_length=True).length
+
     for index, (word, num_tokens) in enumerate(zip(words, num_tokens_list)):
+        word['num_tokens'] = num_tokens
+
         # Add new segment
         if index == 0 or word_start(words[index]) - word_end(words[index-1]) >= segmentation_args.pause_threshold:
             first_pass_segments.append([word])
@@ -80,7 +84,7 @@ def generate_segments(words, tokenizer, segmentation_args):
 
         for word in segment:
             new_seg = current_segment_num_tokens + \
-                num_tokens >= max_q_size
+                word['num_tokens'] >= max_q_size
             if new_seg:
                 # Adding this token would make it have too many tokens
                 # We save this batch and create new
@@ -88,7 +92,7 @@ def generate_segments(words, tokenizer, segmentation_args):
 
             # Add tokens to current segment
             current_segment.append(word)
-            current_segment_num_tokens += num_tokens
+            current_segment_num_tokens += word['num_tokens']
 
             if not new_seg:
                 continue
@@ -96,13 +100,18 @@ def generate_segments(words, tokenizer, segmentation_args):
             # Just created a new segment, so we remove until we only have buffer_size tokens
             last_index = 0
             while current_segment_num_tokens > buffer_size and current_segment:
-                current_segment_num_tokens -= num_tokens_list[last_index]
+                current_segment_num_tokens -= current_segment[last_index]['num_tokens']
                 last_index += 1
 
             current_segment = current_segment[last_index:]
 
         if current_segment:  # Add remaining segment
             second_pass_segments.append(current_segment)
+
+    # Cleaning up, delete 'num_tokens' from each word
+    # for segment in second_pass_segments:
+    for word in words:
+        word.pop('num_tokens', None)
 
     return second_pass_segments
 
@@ -111,7 +120,7 @@ def extract_segment(words, start, end, map_function=None):
     """Extracts all words with time in [start, end]"""
 
     a = binary_search_below(words, 0, len(words) - 1, start)
-    b = min(binary_search_above(words, 0, len(words) - 1, end) + 1 , len(words))
+    b = min(binary_search_above(words, 0, len(words) - 1, end) + 1, len(words))
 
     to_transform = map_function is not None and callable(map_function)
 
