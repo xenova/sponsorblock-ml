@@ -139,7 +139,7 @@ def binary_search_below(transcript, start_index, end_index, time):
 
     middle_index = (start_index + end_index) // 2
     middle = transcript[middle_index]
-    middle_time = avg(middle['start'], middle['end'])
+    middle_time = avg(word_start(middle), word_end(middle))
 
     if time <= middle_time:
         return binary_search_below(transcript, start_index, middle_index, time)
