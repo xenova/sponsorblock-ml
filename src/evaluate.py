@@ -137,7 +137,7 @@ def main():
 
     # Load labelled data:
     final_path = os.path.join(
-        dataset_args.data_dir, dataset_args.processed_database)
+        dataset_args.data_dir, dataset_args.processed_file)
 
     if not os.path.exists(final_path):
         print('ERROR: Processed database not found.',
