@@ -11,11 +11,13 @@ from urllib.parse import quote
 # Allow direct execution
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'src'))  # noqa
 
-from predict import SegmentationArguments, ClassifierArguments, predict as pred  # noqa
+from preprocess import get_words
+from predict import SegmentationArguments, ClassifierArguments, predict as pred
 from evaluate import EvaluationArguments
 from shared import seconds_to_time, CATGEGORY_OPTIONS
 from utils import regex_search
-from model import get_model_tokenizer, get_classifier_vectorizer
+from model import get_model_tokenizer
+from errors import TranscriptError
 
 st.set_page_config(
     page_title='SponsorBlock ML',
@@ -105,14 +107,32 @@ for m in MODELS:
 CLASSIFIER_PATH = 'Xenova/sponsorblock-classifier'
 
 
-def predict_function(model_id, model, tokenizer, segmentation_args, classifier_args, video_id):
-    if video_id not in prediction_cache[model_id]:
-        prediction_cache[model_id][video_id] = pred(
+TRANSCRIPT_TYPES = {
+    'AUTO_MANUAL': {
+        'label': 'Auto-generated (fallback to manual)',
+        'type': 'auto',
+        'fallback': 'manual'
+    },
+    'MANUAL_AUTO': {
+        'label': 'Manual (fallback to auto-generated)',
+        'type': 'manual',
+        'fallback': 'auto'
+    },
+    # 'TRANSLATED': 'Translated to English' # Coming soon
+}
+
+
+def predict_function(model_id, model, tokenizer, segmentation_args, classifier_args, video_id, words, ts_type_id):
+    cache_id = f'{video_id}_{ts_type_id}'
+
+    if cache_id not in prediction_cache[model_id]:
+        prediction_cache[model_id][cache_id] = pred(
             video_id, model, tokenizer,
             segmentation_args=segmentation_args,
-            classifier_args=classifier_args
+            classifier_args=classifier_args,
+            words=words
         )
-    return prediction_cache[model_id][video_id]
+    return prediction_cache[model_id][cache_id]
 
 
 def load_predict(model_id):
@@ -133,7 +153,39 @@ def load_predict(model_id):
     return prediction_function_cache[model_id]
 
 
+def create_button(text, url):
+    return f"""<div class="row-widget stButton" style="text-align: center">
+        <a href="{url}" target="_blank" rel="noopener noreferrer" class="btn-link">
+            <button kind="primary" class="btn">{text}</button>
+        </a>
+    </div>"""
+
+
 def main():
+    st.markdown("""<style>
+    .btn {
+        display: inline-flex;
+        -webkit-box-align: center;
+        align-items: center;
+        -webkit-box-pack: center;
+        justify-content: center;
+        font-weight: 600;
+        padding: 0.25rem 0.75rem;
+        border-radius: 0.25rem;
+        margin: 0px;
+        line-height: 1.5;
+        color: inherit;
+        width: auto;
+        user-select: none;
+        background-color: rgb(255, 255, 255);
+        border: 1px solid rgba(49, 51, 63, 0.2);
+    }
+    .btn-link {
+        color: inherit;
+        text-decoration: none;
+    }
+    </style>""", unsafe_allow_html=True)
+
     top = st.container()
     output = st.empty()
 
@@ -143,12 +195,18 @@ def main():
         '##### Automatically detect in-video YouTube sponsorships, self/unpaid promotions, and interaction reminders.')
 
     # Add controls
-    model_id = top.selectbox(
-        'Select model', MODELS.keys(), index=0, on_change=output.empty)
 
-    video_input = top.text_input(
-        'Video URL/ID:', on_change=output.empty)
+    col1, col2 = top.columns(2)
 
+    with col1:
+        model_id = st.selectbox(
+            'Select model', MODELS.keys(), index=0, on_change=output.empty)
+
+    with col2:
+        ts_type_id = st.selectbox(
+            'Transcript type', TRANSCRIPT_TYPES.keys(), index=0, format_func=lambda x: TRANSCRIPT_TYPES[x]['label'], on_change=output.empty)
+
+    video_input = top.text_input('Video URL/ID:', on_change=output.empty)
     categories = top.multiselect('Categories:',
                                  CATGEGORY_OPTIONS.keys(),
                                  CATGEGORY_OPTIONS.keys(),
@@ -172,8 +230,21 @@ def main():
             st.exception(ValueError('Invalid YouTube URL/ID'))
             return
 
+        try:
+            with st.spinner('Downloading transcript...'):
+                words = get_words(video_id,
+                                  transcript_type=TRANSCRIPT_TYPES[ts_type_id]['type'],
+                                  fallback=TRANSCRIPT_TYPES[ts_type_id]['fallback']
+                                  )
+        except TranscriptError:
+            pass
+
+        if not words:
+            st.error('No transcript found!')
+            return
+
         with st.spinner('Running model...'):
-            predictions = predict(video_id)
+            predictions = predict(video_id, words, ts_type_id)
 
         if len(predictions) == 0:
             st.success('No segments found!')
@@ -214,14 +285,23 @@ def main():
                 st.write(f'**Text:** "{text}"')
 
         if len(submit_segments) == 0:
-            st.success(f'No segments found! ({len(predictions)} ignored due to filters/settings)')
+            st.success(
+                f'No segments found! ({len(predictions)} ignored due to filters/settings)')
             return
 
+        num_hidden = len(predictions) - len(submit_segments)
+        if num_hidden > 0:
+            st.info(
+                f'{num_hidden} predictions hidden (adjust the settings and filters to view them all).')
+
         json_data = quote(json.dumps(submit_segments))
-        link = f'[Submit Segments](https://www.youtube.com/watch?v={video_id}#segments={json_data})'
-        st.markdown(link, unsafe_allow_html=True)
-        wiki_link = '[Review generated segments before submitting!](https://wiki.sponsor.ajay.app/w/Automating_Submissions)'
-        st.markdown(wiki_link, unsafe_allow_html=True)
+        link = f'https://www.youtube.com/watch?v={video_id}#segments={json_data}'
+        st.markdown(create_button('Submit Segments', link),
+                    unsafe_allow_html=True)
+
+        st.markdown(f"""<div style="text-align: center;font-size: 16px;margin-top: 6px">
+        <a href="https://wiki.sponsor.ajay.app/w/Automating_Submissions" target="_blank" rel="noopener noreferrer">(Review before submitting!)</a>
+        </div>""", unsafe_allow_html=True)
 
 
 if __name__ == '__main__':
