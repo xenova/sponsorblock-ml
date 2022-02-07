@@ -27,7 +27,7 @@ Check out the demo application by visiting [https://xenova.github.io/sponsorbloc
 2. Run predictions:
 	- Predict for a single video using the `--video_id` argument. For example:
 		```bash
-		python src/predict --video_id zo_uoFI1WXM
+		python src/predict.py --video_id zo_uoFI1WXM
 		```
 
 	- Predict for multiple videos using the `--video_ids` argument. For example:
