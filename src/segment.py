@@ -50,7 +50,6 @@ def word_end(word):
 
 
 def generate_segments(words, tokenizer, segmentation_args):
-    first_pass_segments = []
 
     cleaned_words_list = []
     for w in words:
@@ -61,6 +60,7 @@ def generate_segments(words, tokenizer, segmentation_args):
     num_tokens_list = tokenizer(cleaned_words_list, add_special_tokens=False,
                                 truncation=True, return_attention_mask=False, return_length=True).length
 
+    first_pass_segments = []
     for index, (word, num_tokens) in enumerate(zip(words, num_tokens_list)):
         word['num_tokens'] = num_tokens
 
@@ -81,14 +81,14 @@ def generate_segments(words, tokenizer, segmentation_args):
     for segment in first_pass_segments:
         current_segment_num_tokens = 0
         current_segment = []
-
+        after_split_segments = []
         for word in segment:
             new_seg = current_segment_num_tokens + \
                 word['num_tokens'] >= max_q_size
             if new_seg:
                 # Adding this token would make it have too many tokens
                 # We save this batch and create new
-                second_pass_segments.append(current_segment)
+                after_split_segments.append(current_segment)
 
             # Add tokens to current segment
             current_segment.append(word)
@@ -106,10 +106,13 @@ def generate_segments(words, tokenizer, segmentation_args):
             current_segment = current_segment[last_index:]
 
         if current_segment:  # Add remaining segment
-            second_pass_segments.append(current_segment)
+            after_split_segments.append(current_segment)
+
+        # TODO if len(after_split_segments) > 1, a split occurred
+
+        second_pass_segments.extend(after_split_segments)
 
     # Cleaning up, delete 'num_tokens' from each word
-    # for segment in second_pass_segments:
     for word in words:
         word.pop('num_tokens', None)
 
@@ -120,7 +123,7 @@ def extract_segment(words, start, end, map_function=None):
     """Extracts all words with time in [start, end]"""
 
     a = max(binary_search_below(words, 0, len(words), start), 0)
-    b = min(binary_search_above(words, -1, len(words) -1, end) + 1, len(words))
+    b = min(binary_search_above(words, -1, len(words) - 1, end) + 1, len(words))
 
     to_transform = map_function is not None and callable(map_function)
 
