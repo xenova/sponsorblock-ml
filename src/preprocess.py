@@ -1,9 +1,8 @@
-from utils import jaccard, Task, InterruptibleTaskPool
+from utils import jaccard
 from functools import lru_cache
 from datetime import datetime
 import itertools
 from typing import Optional, List
-from datasets import load_dataset
 from model import ModelArguments
 import segment
 from tqdm import tqdm
@@ -21,94 +20,141 @@ import time
 import requests
 
 
-def find(s, ch):
-    return [i for i, ltr in enumerate(s) if ltr == ch]
-
-
-def wordify(transcript, maximum_wps=1):
-    """Try to replicate format for automatically generated transcripts"""
-
-    # Do not allow segments to be on screen for too long using maximum_wps
-    words = []
-
-    for line_index, line in enumerate(transcript):
-        text = line['text'].replace('\n', ' ').strip()
-        if not text:
-            continue
-
-        start = line['start']
-        next_start = transcript[line_index + 1]['start'] \
-            if line_index < len(transcript) - 1 else float('inf')
-
-        # Use maximum wps to calculate latest end (to avoid segments which stay on screen too long)
-        longest_duration = maximum_wps * text.count(' ')
-        latest_end = start + longest_duration
-        end = min(start + line['duration'], next_start, latest_end)
-
-        duration = end - start
-
-        indices = find(text, ' ') + [len(text)]
-        start_index = 0
-        for i in range(len(indices)):
-            word = text[start_index:indices[i]].strip()
-            if not word:
-                continue  # Skip empty words (e.g., \n)
-            percentage = start_index/indices[-1]
-
-            w_duration = len(word)/indices[-1] * duration
-
-            w_start = start + percentage * duration
-
-            words.append({
-                'start': round(w_start, 3),
-                'duration': round(w_duration, 3),
-                'end': round(w_start + w_duration, 3),
-                'text': word,
-            })
-
-            start_index = indices[i] + 1
-
-    return words
-
-
-def get_manual_words(transcript_list):
-    transcript = transcript_list.find_manually_created_transcript(
-        ['en-GB', 'en-US', 'en']).fetch()
-    return wordify(transcript)
-
-
 PROFANITY_RAW = '[ __ ]'  # How YouTube transcribes profanity
 PROFANITY_CONVERTED = '*****'  # Safer version for tokenizing
 
 
-# TODO add end time for words
-def get_auto_words(transcript_list):
-    words = []
-    transcript = transcript_list.find_generated_transcript(['en'])
-    url = transcript._url + '&fmt=json3'
-    info = transcript._http_client.get(url)
+NUM_DECIMALS = 3
 
-    for event in info.json()['events']:
-        start_ms = event.get('tStartMs', 0)
 
-        for word in event.get('segs') or []:
-            offset_ms = word.get('tOffsetMs', 0)
+def parse_transcript_json(json_data, granularity):
+    assert json_data['wireMagic'] == 'pb3'
 
-            texts = word['utf8'].replace(
-                PROFANITY_RAW, PROFANITY_CONVERTED
-            ).strip().split()
+    assert granularity in ('word', 'chunk')
 
-            for text in texts:
-                words.append({
-                    'start': (start_ms + offset_ms)/1000,
-                    'text': text
-                })
+    # TODO remove bracketed words?
+    # (kiss smacks)
+    # (upbeat music)
+    # [text goes here]
 
-    return words
+    # Some manual transcripts aren't that well formatted... but do have punctuation
+    # https://www.youtube.com/watch?v=LR9FtWVjk2c
+
+    parsed_transcript = []
+
+    events = json_data['events']
+
+    for event_index, event in enumerate(events):
+        segments = event.get('segs')
+        if not segments:
+            continue
+
+        # This value is known (when phrase appears on screen)
+        start_ms = event['tStartMs']
+        total_characters = 0
+
+        new_segments = []
+        for seg in segments:
+            text = seg['utf8'].replace('\n', ' ').replace(
+                PROFANITY_RAW, PROFANITY_CONVERTED,  # Needed for auto-generated transcripts
+            ).strip()
+            if not text:
+                continue
+
+            offset_ms = seg.get('tOffsetMs', 0)
+
+            new_segments.append({
+                'text': text,
+                'start': round((start_ms + offset_ms)/1000, NUM_DECIMALS)
+            })
+
+            total_characters += len(text)
+
+        if not new_segments:
+            continue
+
+        if event_index < len(events) - 1:
+            next_start_ms = events[event_index + 1]['tStartMs']
+            total_event_duration_ms = min(
+                event.get('dDurationMs', float('inf')), next_start_ms - start_ms)
+        else:
+            total_event_duration_ms = event.get('dDurationMs', 0)
+
+        avg_seconds_per_character = (
+            total_event_duration_ms/total_characters)/1000
+
+        num_char_count = 0
+        for seg_index, seg in enumerate(new_segments):
+            num_char_count += len(seg['text'])
+
+            # Estimate segment end
+            seg_end = seg['start'] + \
+                (num_char_count * avg_seconds_per_character)
+
+            if seg_index < len(new_segments) - 1:
+                # Do not allow longer than next
+                seg_end = min(seg_end, new_segments[seg_index+1]['start'])
+
+            seg['end'] = round(seg_end, NUM_DECIMALS)
+            parsed_transcript.append(seg)
+
+    final_parsed_transcript = []
+    for i in range(len(parsed_transcript)):
+
+        word_level = granularity == 'word'
+        if word_level:
+            split_text = parsed_transcript[i]['text'].split()
+        elif granularity == 'chunk':
+            # Split on space after punctuation
+            split_text = re.split(
+                r'(?<=[.!?,-;])\s+', parsed_transcript[i]['text'])
+            if len(split_text) == 1:
+                split_on_whitespace = parsed_transcript[i]['text'].split()
+
+                if len(split_on_whitespace) >= 8:  # Too many words
+                    # Rather split on whitespace instead of punctuation
+                    split_text = split_on_whitespace
+                else:
+                    word_level = True
+        else:
+            raise ValueError('Unknown granularity')
+
+        segment_end = parsed_transcript[i]['end']
+        if i < len(parsed_transcript) - 1:
+            segment_end = min(segment_end, parsed_transcript[i+1]['start'])
+
+        segment_duration = segment_end - parsed_transcript[i]['start']
+
+        num_chars_in_text = sum(map(len, split_text))
+
+        num_char_count = 0
+        current_offset = 0
+        for s in split_text:
+            num_char_count += len(s)
+
+            next_offset = (num_char_count/num_chars_in_text) * segment_duration
+
+            word_start = round(
+                parsed_transcript[i]['start'] + current_offset, NUM_DECIMALS)
+            word_end = round(
+                parsed_transcript[i]['start'] + next_offset, NUM_DECIMALS)
+
+            # Make the reasonable assumption that min wps is 1.5
+            final_parsed_transcript.append({
+                'text': s,
+                'start': word_start,
+                'end': min(word_end, word_start + 1.5) if word_level else word_end
+            })
+            current_offset = next_offset
+
+    return final_parsed_transcript
 
 
 def list_transcripts(video_id):
-    return YouTubeTranscriptApi.list_transcripts(video_id)
+    try:
+        return YouTubeTranscriptApi.list_transcripts(video_id)
+    except json.decoder.JSONDecodeError:
+        return None
 
 
 WORDS_TO_REMOVE = [
@@ -119,60 +165,74 @@ WORDS_TO_REMOVE = [
 
 
 @lru_cache(maxsize=16)
-def get_words(video_id, process=True, transcript_type='auto', fallback='manual', filter_words_to_remove=True):
+def get_words(video_id, process=True, transcript_type='auto', fallback='manual', filter_words_to_remove=True, download=False, granularity='word'):
     """Get parsed video transcript with caching system
     returns None if not processed yet and process is False
     """
+    # NOTE: granularity='chunk' should only be used for generating training data... nowhere else
+
     transcript_path = os.path.join(  # TODO use relative path to this
         'transcripts', transcript_type, f'{video_id}.json')
 
-    words = None
+    raw_transcript_json = None
     try:
-        if os.path.exists(transcript_path):  # Load from file
+        if not download and os.path.exists(transcript_path):  # Load from file
             with open(transcript_path) as fp:
-                words = json.load(fp)  # May be empty
+                raw_transcript_json = json.load(fp)  # May be empty
 
         elif process:
             transcript_list = list_transcripts(video_id)
 
-            if transcript_type == 'manual':
-                words = get_manual_words(transcript_list)
-            else:
-                words = get_auto_words(transcript_list)
+            if transcript_list is not None:
+                if transcript_type == 'manual':
+                    ts = transcript_list.find_manually_created_transcript(
+                        ['en-GB', 'en-US', 'en'])
+                else:
+                    ts = transcript_list.find_generated_transcript(['en'])
+
+                raw_transcript_json = ts._http_client.get(
+                    f'{ts._url}&fmt=json3').json()
 
     except (TooManyRequests, YouTubeRequestFailed):
         raise  # Cannot recover from these errors and do not mark as empty transcript
 
-    except requests.exceptions.ConnectionError:  # Can recover
+    except requests.exceptions.RequestException:  # Can recover
         time.sleep(10)  # Timeout
-        return get_words(video_id, process, transcript_type, fallback)
+        return get_words(video_id, process, transcript_type, fallback, granularity)
 
     except CouldNotRetrieveTranscript:  # Retrying won't solve
         pass  # Mark as empty transcript
 
     except json.decoder.JSONDecodeError:
         print('JSONDecodeError for', video_id)
-        os.remove(transcript_path)  # Remove file and try again
-        return get_words(video_id, process, transcript_type, fallback)
+        if os.path.exists(transcript_path):
+            os.remove(transcript_path)  # Remove file and try again
+        return get_words(video_id, process, transcript_type, fallback, granularity)
 
     # Tried to process it, but it was empty...
-    if process and not os.path.exists(transcript_path):
+    if download or (process and not os.path.exists(transcript_path)):
         with open(transcript_path, 'w') as fp:
-            json.dump(words, fp)
+            json.dump(raw_transcript_json, fp)
 
-    if not words and fallback is not None:
-        return get_words(video_id, process, transcript_type=fallback, fallback=None)
+    if not raw_transcript_json and fallback is not None:
+        return get_words(video_id, process, transcript_type=fallback, fallback=None, granularity=granularity)
 
-    if words and filter_words_to_remove:
-        words = list(filter(lambda x: x['text'] not in WORDS_TO_REMOVE, words))
+    if raw_transcript_json:
+        processed_transcript = parse_transcript_json(
+            raw_transcript_json, granularity)
+        if filter_words_to_remove:
+            processed_transcript = list(
+                filter(lambda x: x['text'] not in WORDS_TO_REMOVE, processed_transcript))
+    else:
+        processed_transcript = raw_transcript_json  # Either None or []
 
-    return words
+    return processed_transcript
 
 
 # TODO make min_sponsor_segment_length param
 # TODO rename to extract_segments
 def extract_sponsors(words, min_sponsor_segment_length=3):
-    if not words or len(words) < min_sponsor_segment_length:
+    if not words:
         return []
 
     paragraphs = []
@@ -302,8 +362,12 @@ class PreprocessArguments:
 
     max_date: str = field(
         # default='01/01/9999', # Include all
-        default='27/01/2022',
+        default='02/02/2022',
         metadata={'help': 'Only use videos that have some segment from before this date (exclusive). This allows for videos to have segments be corrected, but ignores new videos (posted after this date) to enter the pool.'})
+
+    keep_duplicate_segments: bool = field(
+        default=False, metadata={'help': 'Keep duplicate segments'}
+    )
 
     do_process_database: bool = field(
         default=False, metadata={'help': 'Process the raw database'}
@@ -391,23 +455,6 @@ def download_file(url, filename):
                 f.write(chunk)
 
     return total_bytes == os.path.getsize(filename)
-
-
-def load_datasets(dataset_args):
-    print('Reading datasets')
-    data_files = {}
-
-    if dataset_args.train_file is not None:
-        data_files['train'] = os.path.join(
-            dataset_args.data_dir, dataset_args.train_file)
-    if dataset_args.validation_file is not None:
-        data_files['validation'] = os.path.join(
-            dataset_args.data_dir, dataset_args.validation_file)
-    if dataset_args.test_file is not None:
-        data_files['test'] = os.path.join(
-            dataset_args.data_dir, dataset_args.test_file)
-
-    return load_dataset('json', data_files=data_files, cache_dir=dataset_args.dataset_cache_dir)
 
 
 @dataclass
@@ -503,9 +550,11 @@ def main():
                 break
             print('Failed, trying next')
 
+    os.makedirs(dataset_args.data_dir, exist_ok=True)
     processed_db_path = os.path.join(
         dataset_args.data_dir, dataset_args.processed_database)
 
+    # TODO process all valid possible items and then do filtering only later
     @lru_cache(maxsize=1)
     def read_db():
         if not preprocess_args.overwrite and os.path.exists(processed_db_path):
@@ -520,6 +569,7 @@ def main():
 
             for line in reader:
 
+                # Never show:
                 if line['service'] != 'YouTube':
                     continue
                 if len(line['videoID']) != 11:
@@ -565,9 +615,10 @@ def main():
                 })
 
         # Remove duplicate sponsor segments by choosing best (most votes)
-        print('Remove duplicate segments')
-        for key in db:
-            db[key] = remove_duplicate_segments(db[key])
+        if not preprocess_args.keep_duplicate_segments:
+            print('Remove duplicate segments')
+            for key in db:
+                db[key] = remove_duplicate_segments(db[key])
 
         # We now remove whole videos from the list
         # Helps with obtaining "fully-labelled" videos
@@ -616,20 +667,44 @@ def main():
 
         video_ids = list(parsed_database.keys() - finished)
 
-        # Create tasks generator
-        tasks = (
-            Task(get_words, video_id)
-            for video_id in video_ids
-        )
+        # https://stackoverflow.com/a/63495323
+        import concurrent
+        POLL_INTERVAL = 0.1
 
-        print('Downloading transcripts')
-        with tqdm(total=len(video_ids)) as progress:
-            def callback(task):
-                progress.set_description(f'Processing {task.args[0]}')
-                progress.update()
+        # Wrap get words function to return video_id after completion
+        def get_words_wrapper(video_id):
+            get_words(video_id)
+            return video_id
 
-            InterruptibleTaskPool(
-                tasks, preprocess_args.num_jobs, callback).start()
+        print('Setting up ThreadPoolExecutor')
+        with concurrent.futures.ThreadPoolExecutor(max_workers=preprocess_args.num_jobs) as pool, \
+                tqdm(total=len(video_ids)) as progress:
+
+            all_futures = (pool.submit(get_words_wrapper, video_id)
+                           for video_id in video_ids)
+            to_process = set(itertools.islice(
+                all_futures, preprocess_args.num_jobs))
+            try:
+                while to_process:
+                    just_finished, to_process = concurrent.futures.wait(
+                        to_process, timeout=POLL_INTERVAL)
+                    to_process |= set(itertools.islice(
+                        all_futures, len(just_finished)))
+
+                    for d in just_finished:
+                        progress.set_description(f'Processed {d.result()}')
+                        progress.update()
+
+            except KeyboardInterrupt:
+                print('Gracefully shutting down: Cancelling unscheduled tasks')
+
+                # only futures that are not done will prevent exiting
+                for future in to_process:
+                    future.cancel()
+
+                print('Waiting for in-progress tasks to complete')
+                concurrent.futures.wait(to_process, timeout=None)
+                print('Cancellation successful')
 
     final_path = os.path.join(
         dataset_args.data_dir, dataset_args.processed_file)
@@ -641,9 +716,14 @@ def main():
 
         parsed_database = read_db()
 
-        # TODO parallelise?
-        with tqdm(total=len(parsed_database)) as progress:
-            for index, (video_id, segments) in enumerate(parsed_database.items()):
+        transcribed = set(x.split('.')[0] for x in os.listdir(
+            'transcripts/auto/') + os.listdir('transcripts/manual/'))
+
+        # Only consider videos that have been transcribed already
+        video_ids = parsed_database.keys() & transcribed
+
+        with tqdm(total=len(video_ids)) as progress:
+            for index, video_id in enumerate(video_ids):
                 if preprocess_args.max_videos is not None and index >= preprocess_args.max_videos:
                     break
                 progress.set_description(f'Processing {video_id}')
@@ -654,7 +734,8 @@ def main():
                     continue
 
                 final_vid_segs = []
-                for seg in segments:  # Only add segments with high enough wps
+                # Only add segments with high enough wps
+                for seg in parsed_database[video_id]:
                     segment_words = segment.extract_segment(
                         video_words, seg['start'], seg['end'])
 
@@ -697,8 +778,6 @@ def main():
     # if not os.path.exists(excess_path) or preprocess_args.overwrite
     # TODO use overwrite param
 
-    os.makedirs(dataset_args.data_dir, exist_ok=True)
-
     positive_file = os.path.join(
         dataset_args.data_dir, dataset_args.positive_file)
     negative_file = os.path.join(
@@ -724,7 +803,7 @@ def main():
 
         data = list(itertools.islice(data, start_index, end_index))
 
-        write_mode = 'w' if preprocess_args.overwrite else 'a'
+        write_mode = 'w'  # if preprocess_args.overwrite else 'a'
         with open(positive_file, write_mode, encoding='utf-8') as positive, \
                 open(negative_file, write_mode, encoding='utf-8') as negative, \
                 tqdm(data) as progress:
@@ -734,15 +813,13 @@ def main():
                 progress.set_description(f'Processing {video_id}')
                 progress.update()
 
-                words = get_words(video_id, process=False)
+                # Use chunk granularity to improve manual transcripts
+                words = get_words(video_id, process=False, granularity='chunk')
                 if not words:
                     continue
 
-                num_words = len(words)
-                if num_words <= 1:
+                if len(words) <= 1:
                     continue
-
-                # TODO only count words that aren't [Music], [Applause], etc.
 
                 segments = segment.generate_labelled_segments(
                     words, tokenizer, segmentation_args, sponsor_segments)
@@ -753,13 +830,13 @@ def main():
                 for seg in segments:
                     seg_start = segment.word_start(seg[0])
                     seg_end = segment.word_end(seg[-1])
-                    # duration = seg_end - seg_start
-                    # wps = len(seg)/duration if duration > 0 else 0
+                    duration = seg_end - seg_start
+                    wps = len(seg)/duration if duration > 0 else 0
 
-                    # # Ignore segments with "not enough words" in the transcript
-                    # # Must do here since this includes non-sponsor segments
-                    # if wps < preprocess_args.min_wps:
-                    #     continue
+                    # Ignore segments with "not enough words" in the transcript
+                    # Must do here since this includes non-sponsor segments
+                    if wps < preprocess_args.min_wps:
+                        continue
 
                     d = {
                         'video_index': offset + start_index,
