@@ -213,6 +213,10 @@ def main():
                 st.write(f"**Confidence:** {confidence:.2f}%")
                 st.write(f'**Text:** "{text}"')
 
+        if len(submit_segments) == 0:
+            st.success(f'No segments found! ({len(predictions)} ignored due to filters/settings)')
+            return
+
         json_data = quote(json.dumps(submit_segments))
         link = f'[Submit Segments](https://www.youtube.com/watch?v={video_id}#segments={json_data})'
         st.markdown(link, unsafe_allow_html=True)
