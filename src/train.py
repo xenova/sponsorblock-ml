@@ -1,4 +1,5 @@
-from preprocess import load_datasets, DatasetArguments
+from datasets import load_dataset
+from preprocess import DatasetArguments
 from predict import ClassifierArguments, SEGMENT_MATCH_RE, CATEGORIES
 from shared import CustomTokens, GeneralArguments, OutputArguments
 from model import ModelArguments
@@ -40,6 +41,24 @@ logging.basicConfig(
     datefmt='%m/%d/%Y %H:%M:%S',
     handlers=[logging.StreamHandler(sys.stdout)],
 )
+
+
+def load_datasets(dataset_args):
+
+    print('Reading datasets')
+    data_files = {}
+
+    if dataset_args.train_file is not None:
+        data_files['train'] = os.path.join(
+            dataset_args.data_dir, dataset_args.train_file)
+    if dataset_args.validation_file is not None:
+        data_files['validation'] = os.path.join(
+            dataset_args.data_dir, dataset_args.validation_file)
+    if dataset_args.test_file is not None:
+        data_files['test'] = os.path.join(
+            dataset_args.data_dir, dataset_args.test_file)
+
+    return load_dataset('json', data_files=data_files, cache_dir=dataset_args.dataset_cache_dir)
 
 
 @dataclass
