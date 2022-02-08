@@ -112,6 +112,6 @@ def get_model_tokenizer(model_name_or_path, cache_dir=None):
     # TODO add this back: means that different models will have different training data
     # Currently we only send 512 tokens to the model each time...
     # Adjust based on dimensions of model
-    # tokenizer.model_max_length = model.config.d_model
+    tokenizer.model_max_length = model.config.d_model
 
     return model, tokenizer
