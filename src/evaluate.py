@@ -15,6 +15,9 @@ import os
 import random
 from shared import seconds_to_time
 from urllib.parse import quote
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -140,8 +143,8 @@ def main():
         dataset_args.data_dir, dataset_args.processed_file)
 
     if not os.path.exists(final_path):
-        print('ERROR: Processed database not found.',
-              f'Run `python src/preprocess.py --update_database --do_process_database` to generate "{final_path}".')
+        logger.error('ERROR: Processed database not found.',
+                     f'Run `python src/preprocess.py --update_database --do_process_database` to generate "{final_path}".')
         return
 
     model, tokenizer = get_model_tokenizer(
@@ -180,7 +183,7 @@ def main():
 
                 sponsor_segments = final_data.get(video_id)
                 if not sponsor_segments:
-                    print('No labels found for', video_id)
+                    logger.warning('No labels found for', video_id)
                     continue
 
                 words = get_words(video_id)
@@ -220,56 +223,78 @@ def main():
                     incorrect_segments = [
                         seg for seg in labelled_predicted_segments if seg['best_prediction'] is None]
 
+                    # Add words to incorrect segments
+                    for seg in incorrect_segments:
+                        seg['words'] = extract_segment(
+                            words, seg['start'], seg['end'])
+
                 else:
                     # Not in database (all segments missed)
                     missed_segments = predictions
-                    incorrect_segments = None
+                    incorrect_segments = []
 
                 if missed_segments or incorrect_segments:
-                    print(f'Issues identified for {video_id} (#{video_index})')
-                    # Potentially missed segments (model predicted, but not in database)
-                    if missed_segments:
-                        print(' - Missed segments:')
-                        segments_to_submit = []
-                        for i, missed_segment in enumerate(missed_segments, start=1):
-                            print(f'\t#{i}:', seconds_to_time(
-                                missed_segment['start']), '-->', seconds_to_time(missed_segment['end']))
-                            print('\t\tText: "', ' '.join(
-                                [w['text'] for w in missed_segment['words']]), '"', sep='')
-                            print('\t\tCategory:',
-                                  missed_segment.get('category'))
-                            if 'probability' in missed_segment:
-                                print('\t\tProbability:',
-                                      missed_segment['probability'])
+                    if evaluation_args.output_as_json:
+                        to_print = {'video_id': video_id}
 
-                            segments_to_submit.append({
-                                'segment': [missed_segment['start'], missed_segment['end']],
-                                'category': missed_segment['category'].lower(),
-                                'actionType': 'skip'
-                            })
+                        for z in missed_segments + incorrect_segments:
+                            z['text'] = ' '.join(x['text']
+                                                 for x in z.pop('words', []))
 
-                        json_data = quote(json.dumps(segments_to_submit))
+                        if missed_segments:
+                            to_print['missed'] = missed_segments
+
+                        if incorrect_segments:
+                            to_print['incorrect'] = incorrect_segments
+
+                        print(json.dumps(to_print))
+                    else:
                         print(
-                            f'\tSubmit: https://www.youtube.com/watch?v={video_id}#segments={json_data}')
+                            f'Issues identified for {video_id} (#{video_index})')
+                        # Potentially missed segments (model predicted, but not in database)
+                        if missed_segments:
+                            print(' - Missed segments:')
+                            segments_to_submit = []
+                            for i, missed_segment in enumerate(missed_segments, start=1):
+                                print(f'\t#{i}:', seconds_to_time(
+                                    missed_segment['start']), '-->', seconds_to_time(missed_segment['end']))
+                                print('\t\tText: "', ' '.join(
+                                    [w['text'] for w in missed_segment['words']]), '"', sep='')
+                                print('\t\tCategory:',
+                                      missed_segment.get('category'))
+                                if 'probability' in missed_segment:
+                                    print('\t\tProbability:',
+                                          missed_segment['probability'])
 
-                    # Potentially incorrect segments (model didn't predict, but in database)
-                    if incorrect_segments:
-                        print(' - Incorrect segments:')
-                        for i, incorrect_segment in enumerate(incorrect_segments, start=1):
-                            print(f'\t#{i}:', seconds_to_time(
-                                incorrect_segment['start']), '-->', seconds_to_time(incorrect_segment['end']))
+                                segments_to_submit.append({
+                                    'segment': [missed_segment['start'], missed_segment['end']],
+                                    'category': missed_segment['category'].lower(),
+                                    'actionType': 'skip'
+                                })
 
-                            seg_words = extract_segment(
-                                words, incorrect_segment['start'], incorrect_segment['end'])
-                            print('\t\tText: "', ' '.join(
-                                [w['text'] for w in seg_words]), '"', sep='')
-                            print('\t\tUUID:', incorrect_segment['uuid'])
-                            print('\t\tCategory:',
-                                  incorrect_segment['category'])
-                            print('\t\tVotes:', incorrect_segment['votes'])
-                            print('\t\tViews:', incorrect_segment['views'])
-                            print('\t\tLocked:', incorrect_segment['locked'])
-                    print()
+                            json_data = quote(json.dumps(segments_to_submit))
+                            print(
+                                f'\tSubmit: https://www.youtube.com/watch?v={video_id}#segments={json_data}')
+
+                        # Potentially incorrect segments (model didn't predict, but in database)
+                        if incorrect_segments:
+                            print(' - Incorrect segments:')
+                            for i, incorrect_segment in enumerate(incorrect_segments, start=1):
+                                print(f'\t#{i}:', seconds_to_time(
+                                    incorrect_segment['start']), '-->', seconds_to_time(incorrect_segment['end']))
+
+                                seg_words = extract_segment(
+                                    words, incorrect_segment['start'], incorrect_segment['end'])
+                                print('\t\tText: "', ' '.join(
+                                    [w['text'] for w in seg_words]), '"', sep='')
+                                print('\t\tUUID:', incorrect_segment['uuid'])
+                                print('\t\tCategory:',
+                                      incorrect_segment['category'])
+                                print('\t\tVotes:', incorrect_segment['votes'])
+                                print('\t\tViews:', incorrect_segment['views'])
+                                print('\t\tLocked:',
+                                      incorrect_segment['locked'])
+                        print()
 
     except KeyboardInterrupt:
         pass
@@ -277,7 +302,7 @@ def main():
     df = pd.DataFrame(out_metrics)
 
     df.to_csv(evaluation_args.output_file)
-    print(df.mean())
+    logger.info(df.mean())
 
 
 if __name__ == '__main__':

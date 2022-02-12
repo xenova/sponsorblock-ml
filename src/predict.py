@@ -111,6 +111,9 @@ class InferenceArguments:
         }
     )
 
+    output_as_json: bool = field(default=False, metadata={
+                                 'help': 'Output evaluations as JSON'})
+
     def __post_init__(self):
         # Try to load model from latest checkpoint
         if self.model_path is None:
@@ -415,6 +418,7 @@ def main():
             print('No predictions found for', video_url, end='\n\n')
             continue
 
+        # TODO use predict_args.output_as_json
         print(len(predictions), 'predictions found for', video_url)
         for index, prediction in enumerate(predictions, start=1):
             print(f'Prediction #{index}:')
