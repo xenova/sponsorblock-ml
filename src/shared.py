@@ -107,10 +107,6 @@ class GeneralArguments:
         torch.cuda.manual_seed_all(self.seed)
 
 
-def device():
-    return torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-
 def seconds_to_time(seconds, remove_leading_zeroes=False):
     fractional = round(seconds % 1, 3)
     fractional = '' if fractional == 0 else str(fractional)[1:]

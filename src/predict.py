@@ -10,7 +10,7 @@ import logging
 import os
 import itertools
 from utils import re_findall
-from shared import CustomTokens, START_SEGMENT_TEMPLATE, END_SEGMENT_TEMPLATE, OutputArguments, device, seconds_to_time
+from shared import CustomTokens, START_SEGMENT_TEMPLATE, END_SEGMENT_TEMPLATE, OutputArguments, seconds_to_time
 from typing import Optional
 from segment import (
     generate_segments,
@@ -301,7 +301,7 @@ CATEGORIES = [None, 'SPONSOR', 'SELFPROMO', 'INTERACTION']
 def predict_sponsor_text(text, model, tokenizer):
     """Given a body of text, predict the words which are part of the sponsor"""
     input_ids = tokenizer(
-        f'{CustomTokens.EXTRACT_SEGMENTS_PREFIX.value} {text}', return_tensors='pt', truncation=True).input_ids.to(device())
+        f'{CustomTokens.EXTRACT_SEGMENTS_PREFIX.value} {text}', return_tensors='pt', truncation=True).input_ids
 
     max_out_len = round(min(
         max(

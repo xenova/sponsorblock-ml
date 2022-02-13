@@ -1,6 +1,6 @@
 from huggingface_hub import hf_hub_download
 from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
-from shared import CustomTokens, device
+from shared import CustomTokens
 from errors import ClassifierLoadError, ModelLoadError
 from functools import lru_cache
 import pickle
@@ -100,7 +100,6 @@ def get_model_tokenizer(model_name_or_path, cache_dir=None):
     # Load pretrained model and tokenizer
     model = AutoModelForSeq2SeqLM.from_pretrained(
         model_name_or_path, cache_dir=cache_dir)
-    model.to(device())
 
     tokenizer = AutoTokenizer.from_pretrained(
         model_name_or_path, max_length=model.config.d_model, cache_dir=cache_dir)
