@@ -177,7 +177,7 @@ def main():
         color: inherit;
         width: auto;
         user-select: none;
-        background-color: rgb(255, 255, 255);
+        background-color: inherit;
         border: 1px solid rgba(49, 51, 63, 0.2);
     }
     .btn-link {
