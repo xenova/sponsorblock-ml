@@ -11,12 +11,10 @@ pinned: true
 # SponsorBlock-ML
 Automatically detect in-video YouTube sponsorships, self/unpaid promotions, and interaction reminders. The model was trained using the [SponsorBlock](https://sponsor.ajay.app/) [database](https://sponsor.ajay.app/database) licensed used under [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/).
 
-Check out the demo application by visiting [https://xenova.github.io/sponsorblock-ml/](https://xenova.github.io/sponsorblock-ml/). You can also run it locally using `make run`.
+Check out the online demo application at [https://xenova.github.io/sponsorblock-ml/](https://xenova.github.io/sponsorblock-ml/), or follow the instructions below to run it locally.
 
 ---
-
-
-## Predicting
+## Installation
 
 1. Download the repository:
 	```bash
@@ -24,24 +22,34 @@ Check out the demo application by visiting [https://xenova.github.io/sponsorbloc
 	cd sponsorblock-ml
 	```
 
-2. Run predictions:
-	- Predict for a single video using the `--video_id` argument. For example:
-		```bash
-		python src/predict.py --video_id zo_uoFI1WXM
-		```
+2. Install the necessary dependencies:
+	```bash
+	pip install -r requirements.txt
+	```
 
-	- Predict for multiple videos using the `--video_ids` argument. For example:
-		```bash
-		python src/predict.py --video_ids IgF3OX8nT0w ao2Jfm35XeE
-		```
+3. Run the application:
+	```bash
+	streamlit run app.py
+	```
+## Predicting
 
-	- Predict for a whole channel using the `--channel_id` argument. For example:
+- Predict for a single video using the `--video_id` argument. For example:
+	```bash
+	python src/predict.py --video_id zo_uoFI1WXM
+	```
 
-		```bash
-		python src/predict.py --channel_id UCHnyfMqiRRG1u-2MsSQLbXA
-		```
+- Predict for multiple videos using the `--video_ids` argument. For example:
+	```bash
+	python src/predict.py --video_ids IgF3OX8nT0w ao2Jfm35XeE
+	```
 
-	Note that on the first run, the program will download the necessary models (which may take some time).
+- Predict for a whole channel using the `--channel_id` argument. For example:
+
+	```bash
+	python src/predict.py --channel_id UCHnyfMqiRRG1u-2MsSQLbXA
+	```
+
+Note that on the first run, the program will download the necessary models (which may take some time).
 
 		
 ---
