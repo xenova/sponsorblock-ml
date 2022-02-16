@@ -20,6 +20,9 @@ import time
 import requests
 
 
+logger = logging.getLogger(__name__)
+
+
 PROFANITY_RAW = '[ __ ]'  # How YouTube transcribes profanity
 PROFANITY_CONVERTED = '*****'  # Safer version for tokenizing
 
@@ -204,7 +207,7 @@ def get_words(video_id, process=True, transcript_type='auto', fallback='manual',
         pass  # Mark as empty transcript
 
     except json.decoder.JSONDecodeError:
-        print('JSONDecodeError for', video_id)
+        logger.warning(f'JSONDecodeError for {video_id}')
         if os.path.exists(transcript_path):
             os.remove(transcript_path)  # Remove file and try again
         return get_words(video_id, process, transcript_type, fallback, granularity)
@@ -543,12 +546,12 @@ def main():
         preprocess_args.raw_data_dir, preprocess_args.raw_data_file)
 
     if preprocess_args.update_database:
-        print('Updating database')
+        logger.info('Updating database')
         for mirror in MIRRORS:
-            print('Downloading from', mirror)
+            logger.info(f'Downloading from {mirror}')
             if download_file(mirror, raw_dataset_path):
                 break
-            print('Failed, trying next')
+            logger.warning('Failed, trying next')
 
     os.makedirs(dataset_args.data_dir, exist_ok=True)
     processed_db_path = os.path.join(
@@ -558,11 +561,10 @@ def main():
     @lru_cache(maxsize=1)
     def read_db():
         if not preprocess_args.overwrite and os.path.exists(processed_db_path):
-            print(
-                'Using cached processed database (use `--overwrite` to avoid this behaviour).')
+            logger.info('Using cached processed database (use `--overwrite` to avoid this behaviour).')
             with open(processed_db_path) as fp:
                 return json.load(fp)
-        print('Processing raw database')
+        logger.info('Processing raw database')
         db = {}
 
         allowed_categories = list(map(str.lower, CATGEGORY_OPTIONS))
@@ -618,7 +620,7 @@ def main():
 
         # Remove duplicate sponsor segments by choosing best (most votes)
         if not preprocess_args.keep_duplicate_segments:
-            print('Remove duplicate segments')
+            logger.info('Remove duplicate segments')
             for key in db:
                 db[key] = remove_duplicate_segments(db[key])
 
@@ -646,7 +648,7 @@ def main():
 
             # TODO remove videos that contain a full-video label?
 
-        print('Saved', len(db), 'videos')
+        logger.info(f'Saved {len(db)} videos')
 
         with open(processed_db_path, 'w') as fp:
             json.dump(db, fp)
@@ -660,7 +662,7 @@ def main():
     # 'userID', 'timeSubmitted', 'views', 'category', 'actionType', 'service', 'videoDuration',
     # 'hidden', 'reputation', 'shadowHidden', 'hashedVideoID', 'userAgent', 'description'
     if preprocess_args.do_transcribe:
-        print('Collecting videos')
+        logger.info('Collecting videos')
         parsed_database = read_db()
 
         # Remove transcripts already processed
@@ -678,7 +680,7 @@ def main():
             get_words(video_id)
             return video_id
 
-        print('Setting up ThreadPoolExecutor')
+        logger.info('Setting up ThreadPoolExecutor')
         with concurrent.futures.ThreadPoolExecutor(max_workers=preprocess_args.num_jobs) as pool, \
                 tqdm(total=len(video_ids)) as progress:
 
@@ -698,21 +700,21 @@ def main():
                         progress.update()
 
             except KeyboardInterrupt:
-                print('Gracefully shutting down: Cancelling unscheduled tasks')
+                logger.info('Gracefully shutting down: Cancelling unscheduled tasks')
 
                 # only futures that are not done will prevent exiting
                 for future in to_process:
                     future.cancel()
 
-                print('Waiting for in-progress tasks to complete')
+                logger.info('Waiting for in-progress tasks to complete')
                 concurrent.futures.wait(to_process, timeout=None)
-                print('Cancellation successful')
+                logger.info('Cancellation successful')
 
     final_path = os.path.join(
         dataset_args.data_dir, dataset_args.processed_file)
 
     if preprocess_args.do_create:
-        print('Create final data')
+        logger.info('Create final data')
 
         final_data = {}
 
@@ -786,7 +788,7 @@ def main():
         dataset_args.data_dir, dataset_args.negative_file)
 
     if preprocess_args.do_generate:
-        print('Generating')
+        logger.info('Generating')
         # max_videos=preprocess_args.max_videos,
         # max_segments=preprocess_args.max_segments,
         # , max_videos, max_segments
@@ -868,8 +870,8 @@ def main():
                         print(json.dumps(d), file=negative)
 
     if preprocess_args.do_split:
-        print('Splitting')
-        print('Read files')
+        logger.info('Splitting')
+        logger.info('Read files')
 
         with open(positive_file, encoding='utf-8') as positive:
             sponsors = positive.readlines()
@@ -877,11 +879,11 @@ def main():
         with open(negative_file, encoding='utf-8') as negative:
             non_sponsors = negative.readlines()
 
-        print('Shuffle')
+        logger.info('Shuffle')
         random.shuffle(sponsors)
         random.shuffle(non_sponsors)
 
-        print('Calculate ratios')
+        logger.info('Calculate ratios')
         # Ensure correct ratio of positive to negative segments
         percentage_negative = 1 - preprocess_args.percentage_positive
 
@@ -901,12 +903,12 @@ def main():
             excess = non_sponsors[z:]
             non_sponsors = non_sponsors[:z]
 
-        print('Join')
+        logger.info('Join')
         all_labelled_segments = sponsors + non_sponsors
 
         random.shuffle(all_labelled_segments)
 
-        print('Split')
+        logger.info('Split')
         ratios = [preprocess_args.train_split,
                   preprocess_args.test_split,
                   preprocess_args.valid_split]
@@ -927,9 +929,9 @@ def main():
                 with open(outfile, 'w', encoding='utf-8') as fp:
                     fp.writelines(items)
             else:
-                print('Skipping', name)
+                logger.info(f'Skipping {name}')
 
-        print('Write')
+        logger.info('Write')
         # Save excess items
         excess_path = os.path.join(
             dataset_args.data_dir, dataset_args.excess_file)
@@ -937,10 +939,9 @@ def main():
             with open(excess_path, 'w', encoding='utf-8') as fp:
                 fp.writelines(excess)
         else:
-            print('Skipping', dataset_args.excess_file)
+            logger.info(f'Skipping {dataset_args.excess_file}')
 
-        print('Finished splitting:', len(sponsors),
-              'sponsors,', len(non_sponsors), 'non sponsors')
+        logger.info(f'Finished splitting: {len(sponsors)} sponsors, {len(non_sponsors)} non sponsors')
 
 
 def split(arr, ratios):
