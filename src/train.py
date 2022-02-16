@@ -297,7 +297,7 @@ def main():
 
         from model import get_model_tokenizer
         model, tokenizer = get_model_tokenizer(
-            model_args.model_name_or_path, model_args.cache_dir)
+            model_args.model_name_or_path, model_args.cache_dir, model_args.no_cuda)
         # max_tokenizer_length = model.config.d_model
 
         # Preprocessing the datasets.

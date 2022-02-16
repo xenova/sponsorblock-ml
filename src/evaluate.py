@@ -143,12 +143,12 @@ def main():
         dataset_args.data_dir, dataset_args.processed_file)
 
     if not os.path.exists(final_path):
-        logger.error('ERROR: Processed database not found.',
-                     f'Run `python src/preprocess.py --update_database --do_process_database` to generate "{final_path}".')
+        logger.error('ERROR: Processed database not found.\n'
+                     f'Run `python src/preprocess.py --update_database --do_create` to generate "{final_path}".')
         return
 
     model, tokenizer = get_model_tokenizer(
-        evaluation_args.model_path, evaluation_args.cache_dir)
+        evaluation_args.model_path, evaluation_args.cache_dir, evaluation_args.no_cuda)
 
     with open(final_path) as fp:
         final_data = json.load(fp)
@@ -178,13 +178,7 @@ def main():
     try:
         with tqdm(video_ids) as progress:
             for video_index, video_id in enumerate(progress):
-
                 progress.set_description(f'Processing {video_id}')
-
-                sponsor_segments = final_data.get(video_id)
-                if not sponsor_segments:
-                    logger.warning('No labels found for', video_id)
-                    continue
 
                 words = get_words(video_id)
                 if not words:
@@ -194,6 +188,8 @@ def main():
                 predictions = predict(video_id, model, tokenizer,
                                       segmentation_args, words, classifier_args)
 
+                # Get labels
+                sponsor_segments = final_data.get(video_id)
                 if sponsor_segments:
                     labelled_words = add_labels_to_words(
                         words, sponsor_segments)
@@ -229,6 +225,7 @@ def main():
                             words, seg['start'], seg['end'])
 
                 else:
+                    # logger.warning(f'No labels found for {video_id}')
                     # Not in database (all segments missed)
                     missed_segments = predictions
                     incorrect_segments = []

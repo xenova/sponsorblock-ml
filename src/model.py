@@ -7,6 +7,7 @@ import pickle
 import os
 from dataclasses import dataclass, field
 from typing import Optional
+import torch
 
 
 @dataclass
@@ -22,6 +23,9 @@ class ModelArguments:
             'help': 'Path to pretrained model or model identifier from huggingface.co/models'
         }
     )
+    no_cuda: bool = field(default=False, metadata={
+                          'help': 'Do not use CUDA even when it is available'})
+
     # config_name: Optional[str] = field( # TODO remove?
     #     default=None, metadata={'help': 'Pretrained config name or path if not the same as model_name'}
     # )
@@ -93,13 +97,15 @@ def get_classifier_vectorizer(classifier_args):
 
 
 @lru_cache(maxsize=None)
-def get_model_tokenizer(model_name_or_path, cache_dir=None):
+def get_model_tokenizer(model_name_or_path, cache_dir=None, no_cuda=False):
     if model_name_or_path is None:
         raise ModelLoadError('Invalid model_name_or_path.')
 
     # Load pretrained model and tokenizer
     model = AutoModelForSeq2SeqLM.from_pretrained(
         model_name_or_path, cache_dir=cache_dir)
+    if not no_cuda:
+        model.to('cuda' if torch.cuda.is_available() else 'cpu')
 
     tokenizer = AutoTokenizer.from_pretrained(
         model_name_or_path, max_length=model.config.d_model, cache_dir=cache_dir)

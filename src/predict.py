@@ -25,6 +25,7 @@ import preprocess
 from errors import PredictionException, TranscriptError, ModelLoadError, ClassifierLoadError
 from model import ModelArguments, get_classifier_vectorizer, get_model_tokenizer
 
+logger = logging.getLogger(__name__)
 
 # Public innertube key (b64 encoded so that it is not incorrectly flagged)
 INNERTUBE_KEY = base64.b64decode(
@@ -114,6 +115,8 @@ class InferenceArguments:
     output_as_json: bool = field(default=False, metadata={
                                  'help': 'Output evaluations as JSON'})
 
+    no_cuda: bool = ModelArguments.__dataclass_fields__['no_cuda']
+
     def __post_init__(self):
         # Try to load model from latest checkpoint
         if self.model_path is None:
@@ -137,8 +140,8 @@ class InferenceArguments:
 
             channel_video_ids = list(itertools.islice(get_all_channel_vids(
                 self.channel_id), start, end))
-            print('Found', len(channel_video_ids),
-                  'for channel', self.channel_id)
+            logger.info(
+                f'Found {len(channel_video_ids)} for channel {self.channel_id}')
 
             self.video_ids += channel_video_ids
 
@@ -300,8 +303,9 @@ CATEGORIES = [None, 'SPONSOR', 'SELFPROMO', 'INTERACTION']
 
 def predict_sponsor_text(text, model, tokenizer):
     """Given a body of text, predict the words which are part of the sponsor"""
+    model_device = next(model.parameters()).device
     input_ids = tokenizer(
-        f'{CustomTokens.EXTRACT_SEGMENTS_PREFIX.value} {text}', return_tensors='pt', truncation=True).input_ids
+        f'{CustomTokens.EXTRACT_SEGMENTS_PREFIX.value} {text}', return_tensors='pt', truncation=True).input_ids.to(model_device)
 
     max_out_len = round(min(
         max(
@@ -389,7 +393,7 @@ def segments_to_predictions(segments, model, tokenizer):
 
 def main():
     # Test on unseen data
-    logging.getLogger().setLevel(logging.DEBUG)
+    # logging.getLogger().setLevel(logging.DEBUG)
 
     hf_parser = HfArgumentParser((
         PredictArguments,
@@ -399,11 +403,12 @@ def main():
     predict_args, segmentation_args, classifier_args = hf_parser.parse_args_into_dataclasses()
 
     if not predict_args.video_ids:
-        print('No video IDs supplied. Use `--video_id`, `--video_ids`, or `--channel_id`.')
+        logger.error(
+            'No video IDs supplied. Use `--video_id`, `--video_ids`, or `--channel_id`.')
         return
 
     model, tokenizer = get_model_tokenizer(
-        predict_args.model_path, predict_args.cache_dir)
+        predict_args.model_path, predict_args.cache_dir, predict_args.no_cuda)
 
     for video_id in predict_args.video_ids:
         video_id = video_id.strip()
@@ -411,11 +416,11 @@ def main():
             predictions = predict(video_id, model, tokenizer,
                                   segmentation_args, classifier_args=classifier_args)
         except TranscriptError:
-            print('No transcript available for', video_id, end='\n\n')
+            logger.warning('No transcript available for', video_id, end='\n\n')
             continue
         video_url = f'https://www.youtube.com/watch?v={video_id}'
         if not predictions:
-            print('No predictions found for', video_url, end='\n\n')
+            logger.info('No predictions found for', video_url, end='\n\n')
             continue
 
         # TODO use predict_args.output_as_json

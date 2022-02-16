@@ -558,6 +558,8 @@ def main():
     @lru_cache(maxsize=1)
     def read_db():
         if not preprocess_args.overwrite and os.path.exists(processed_db_path):
+            print(
+                'Using cached processed database (use `--overwrite` to avoid this behaviour).')
             with open(processed_db_path) as fp:
                 return json.load(fp)
         print('Processing raw database')
@@ -790,7 +792,8 @@ def main():
         # , max_videos, max_segments
 
         from model import get_model_tokenizer
-        model, tokenizer = get_model_tokenizer(model_args.model_name_or_path)
+        model, tokenizer = get_model_tokenizer(
+            model_args.model_name_or_path, model_args.cache_dir, model_args.no_cuda)
 
         # TODO
         # count_videos = 0
