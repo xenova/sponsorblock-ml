@@ -539,7 +539,7 @@ def main():
         ModelArguments,
         GeneralArguments
     ))
-    preprocess_args, dataset_args, segmentation_args, model_args, _ = hf_parser.parse_args_into_dataclasses()
+    preprocess_args, dataset_args, segmentation_args, model_args, general_args = hf_parser.parse_args_into_dataclasses()
 
     raw_dataset_path = os.path.join(
         preprocess_args.raw_data_dir, preprocess_args.raw_data_file)
@@ -796,7 +796,7 @@ def main():
 
         from model import get_model_tokenizer
         model, tokenizer = get_model_tokenizer(
-            model_args.model_name_or_path, model_args.cache_dir, model_args.no_cuda)
+            model_args.model_name_or_path, model_args.cache_dir, general_args.no_cuda)
 
         # TODO
         # count_videos = 0
