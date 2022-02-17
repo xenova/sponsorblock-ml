@@ -138,7 +138,7 @@ def main():
         GeneralArguments
     ))
 
-    evaluation_args, dataset_args, segmentation_args, classifier_args, _ = hf_parser.parse_args_into_dataclasses()
+    evaluation_args, dataset_args, segmentation_args, classifier_args, general_args = hf_parser.parse_args_into_dataclasses()
 
     # Load labelled data:
     final_path = os.path.join(
@@ -150,7 +150,7 @@ def main():
         return
 
     model, tokenizer = get_model_tokenizer(
-        evaluation_args.model_path, evaluation_args.cache_dir, evaluation_args.no_cuda)
+        evaluation_args.model_path, evaluation_args.cache_dir, general_args.no_cuda)
 
     with open(final_path) as fp:
         final_data = json.load(fp)

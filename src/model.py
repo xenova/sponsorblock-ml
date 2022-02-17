@@ -23,8 +23,6 @@ class ModelArguments:
             'help': 'Path to pretrained model or model identifier from huggingface.co/models'
         }
     )
-    no_cuda: bool = field(default=False, metadata={
-                          'help': 'Do not use CUDA even when it is available'})
 
     # config_name: Optional[str] = field( # TODO remove?
     #     default=None, metadata={'help': 'Pretrained config name or path if not the same as model_name'}

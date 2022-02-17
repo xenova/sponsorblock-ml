@@ -10,7 +10,7 @@ import logging
 import os
 import itertools
 from utils import re_findall
-from shared import CustomTokens, START_SEGMENT_TEMPLATE, END_SEGMENT_TEMPLATE, OutputArguments, seconds_to_time
+from shared import CustomTokens, START_SEGMENT_TEMPLATE, END_SEGMENT_TEMPLATE, GeneralArguments, OutputArguments, seconds_to_time
 from typing import Optional
 from segment import (
     generate_segments,
@@ -114,8 +114,6 @@ class InferenceArguments:
 
     output_as_json: bool = field(default=False, metadata={
                                  'help': 'Output evaluations as JSON'})
-
-    no_cuda: bool = ModelArguments.__dataclass_fields__['no_cuda']
 
     def __post_init__(self):
         # Try to load model from latest checkpoint
@@ -398,9 +396,10 @@ def main():
     hf_parser = HfArgumentParser((
         PredictArguments,
         SegmentationArguments,
-        ClassifierArguments
+        ClassifierArguments,
+        GeneralArguments
     ))
-    predict_args, segmentation_args, classifier_args = hf_parser.parse_args_into_dataclasses()
+    predict_args, segmentation_args, classifier_args, general_args = hf_parser.parse_args_into_dataclasses()
 
     if not predict_args.video_ids:
         logger.error(
@@ -408,7 +407,7 @@ def main():
         return
 
     model, tokenizer = get_model_tokenizer(
-        predict_args.model_path, predict_args.cache_dir, predict_args.no_cuda)
+        predict_args.model_path, predict_args.cache_dir, general_args.no_cuda)
 
     for video_id in predict_args.video_ids:
         video_id = video_id.strip()

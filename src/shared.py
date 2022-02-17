@@ -99,6 +99,8 @@ class GeneralArguments:
     seed: Optional[int] = field(default_factory=seed_factory, metadata={
         'help': 'Set seed for deterministic training and testing. By default, it uses the current time (results in essentially random results).'
     })
+    no_cuda: bool = field(default=False, metadata={
+                          'help': 'Do not use CUDA even when it is available'})
 
     def __post_init__(self):
         random.seed(self.seed)
