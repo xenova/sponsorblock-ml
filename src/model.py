@@ -106,15 +106,13 @@ def get_model_tokenizer(model_name_or_path, cache_dir=None, no_cuda=False):
         model.to('cuda' if torch.cuda.is_available() else 'cpu')
 
     tokenizer = AutoTokenizer.from_pretrained(
-        model_name_or_path, max_length=model.config.d_model, cache_dir=cache_dir)
+        model_name_or_path, cache_dir=cache_dir)
 
     # Ensure model and tokenizer contain the custom tokens
     CustomTokens.add_custom_tokens(tokenizer)
     model.resize_token_embeddings(len(tokenizer))
 
-    # TODO add this back: means that different models will have different training data
-    # Currently we only send 512 tokens to the model each time...
-    # Adjust based on dimensions of model
-    tokenizer.model_max_length = model.config.d_model
+    # TODO find a way to adjust based on model's input size
+    # print('tokenizer.model_max_length', tokenizer.model_max_length)
 
     return model, tokenizer
