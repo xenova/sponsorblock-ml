@@ -128,6 +128,8 @@ def calculate_metrics(labelled_words, predictions):
 
 
 def main():
+    logger.setLevel(logging.DEBUG)
+
     hf_parser = HfArgumentParser((
         EvaluationArguments,
         DatasetArguments,

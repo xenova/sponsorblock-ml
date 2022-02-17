@@ -529,8 +529,7 @@ class DatasetArguments:
 def main():
     # Responsible for getting transcrips using youtube_transcript_api,
     # then labelling it according to SponsorBlock's API
-
-    logging.getLogger().setLevel(logging.INFO)  # TODO make param
+    logger.setLevel(logging.DEBUG)
 
     # Generate final.json from sponsorTimes.csv
     hf_parser = HfArgumentParser((
@@ -561,7 +560,8 @@ def main():
     @lru_cache(maxsize=1)
     def read_db():
         if not preprocess_args.overwrite and os.path.exists(processed_db_path):
-            logger.info('Using cached processed database (use `--overwrite` to avoid this behaviour).')
+            logger.info(
+                'Using cached processed database (use `--overwrite` to avoid this behaviour).')
             with open(processed_db_path) as fp:
                 return json.load(fp)
         logger.info('Processing raw database')
@@ -700,7 +700,8 @@ def main():
                         progress.update()
 
             except KeyboardInterrupt:
-                logger.info('Gracefully shutting down: Cancelling unscheduled tasks')
+                logger.info(
+                    'Gracefully shutting down: Cancelling unscheduled tasks')
 
                 # only futures that are not done will prevent exiting
                 for future in to_process:
@@ -941,7 +942,8 @@ def main():
         else:
             logger.info(f'Skipping {dataset_args.excess_file}')
 
-        logger.info(f'Finished splitting: {len(sponsors)} sponsors, {len(non_sponsors)} non sponsors')
+        logger.info(
+            f'Finished splitting: {len(sponsors)} sponsors, {len(non_sponsors)} non sponsors')
 
 
 def split(arr, ratios):

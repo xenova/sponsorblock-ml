@@ -393,7 +393,7 @@ def segments_to_predictions(segments, model, tokenizer):
 
 def main():
     # Test on unseen data
-    # logging.getLogger().setLevel(logging.DEBUG)
+    logger.setLevel(logging.DEBUG)
 
     hf_parser = HfArgumentParser((
         PredictArguments,
