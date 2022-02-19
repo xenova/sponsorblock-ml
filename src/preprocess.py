@@ -20,6 +20,7 @@ import time
 import requests
 
 
+logging.basicConfig()
 logger = logging.getLogger(__name__)
 
 

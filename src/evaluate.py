@@ -17,6 +17,7 @@ from shared import seconds_to_time
 from urllib.parse import quote
 import logging
 
+logging.basicConfig()
 logger = logging.getLogger(__name__)
 
 

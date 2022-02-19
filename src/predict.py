@@ -25,6 +25,7 @@ import preprocess
 from errors import PredictionException, TranscriptError, ModelLoadError, ClassifierLoadError
 from model import ModelArguments, get_classifier_vectorizer, get_model_tokenizer
 
+logging.basicConfig()
 logger = logging.getLogger(__name__)
 
 # Public innertube key (b64 encoded so that it is not incorrectly flagged)

@@ -32,7 +32,7 @@ require_version('datasets>=1.8.0',
 
 os.environ['WANDB_DISABLED'] = 'true'
 
-
+logging.basicConfig()
 logger = logging.getLogger(__name__)
 
 # Setup logging
