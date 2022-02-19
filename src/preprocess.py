@@ -8,7 +8,7 @@ import segment
 from tqdm import tqdm
 from dataclasses import dataclass, field
 from transformers import HfArgumentParser
-from shared import CATGEGORY_OPTIONS, START_SEGMENT_TEMPLATE, END_SEGMENT_TEMPLATE, GeneralArguments, CustomTokens
+from shared import ACTION_OPTIONS, CATGEGORY_OPTIONS, START_SEGMENT_TEMPLATE, END_SEGMENT_TEMPLATE, GeneralArguments, CustomTokens
 import csv
 import re
 import random
@@ -582,7 +582,7 @@ def main():
 
                 if line['category'] not in allowed_categories:
                     continue
-                if line['actionType'] != 'skip':
+                if line['actionType'] not in ACTION_OPTIONS:
                     continue
 
                 # Ignore hidden items
@@ -616,8 +616,15 @@ def main():
                     'submission_time': float(line['timeSubmitted'])/1e3,
                     'reputation': reputation,
                     'category': line['category'],
-                    # 'action': line['actionType'],
+                    'action': line['actionType'],
                 })
+
+        # First, remove videos that contain a full-video label
+        # (may confuse model since disclaimers and such aren't labelled)
+        # Must do it here before removing duplicate segments
+        for key in list(db):
+            if any(x['action'] == 'full' for x in db[key]):
+                del db[key]
 
         # Remove duplicate sponsor segments by choosing best (most votes)
         if not preprocess_args.keep_duplicate_segments:
@@ -646,8 +653,6 @@ def main():
                 # (essentially skips videos that have not been fully watched/reviewed)
                 # Always include segments locked by VIPs, regardless of view count
                 del db[key]
-
-            # TODO remove videos that contain a full-video label?
 
         logger.info(f'Saved {len(db)} videos')
 

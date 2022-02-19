@@ -8,6 +8,7 @@ from typing import Optional
 from dataclasses import dataclass, field
 from enum import Enum
 
+ACTION_OPTIONS = ['skip', 'mute', 'full']
 
 CATGEGORY_OPTIONS = {
     'SPONSOR': 'Sponsor',
