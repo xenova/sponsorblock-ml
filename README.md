@@ -118,5 +118,5 @@ If you wish to finetune an original transformer model, use one of the supported 
 ### Classifier
 The classifier is used to add probabilities to the category predictions. Train the classifier using:
 ```bash
-python src/train.py --do_train_classifier --skip_train_transformer
+python src/train.py --train_classifier --skip_train_transformer
 ```
