@@ -166,6 +166,9 @@ SEGMENT_MATCH_RE = fr'{_SEGMENT_START}\s*(?P<text>.*?)\s*(?:{_SEGMENT_END}|$)'
 MATCH_WINDOW = 25       # Increase for accuracy, but takes longer: O(n^3)
 MERGE_TIME_WITHIN = 8   # Merge predictions if they are within x seconds
 
+# Any prediction whose start time is <= this will be set to start at 0
+START_TIME_ZERO_THRESHOLD = 0.08
+
 
 @dataclass(frozen=True, eq=True)
 class ClassifierArguments:
@@ -367,7 +370,7 @@ def segments_to_predictions(segments, model, tokenizer):
 
     final_predicted_time_ranges = []
     for range in predicted_time_ranges:
-        start_time = range['start']
+        start_time = range['start'] if range['start'] > START_TIME_ZERO_THRESHOLD else 0
         end_time = range['end']
 
         if prev_prediction is not None and \
