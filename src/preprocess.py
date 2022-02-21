@@ -59,9 +59,19 @@ def parse_transcript_json(json_data, granularity):
 
         new_segments = []
         for seg in segments:
-            text = seg['utf8'].replace('\n', ' ').replace(
-                PROFANITY_RAW, PROFANITY_CONVERTED,  # Needed for auto-generated transcripts
-            ).strip()
+            # Replace \n, \t, etc. with space
+            text = ' '.join(seg['utf8'].split())
+
+            # Remove zero-width spaces and strip trailing and leading whitespace
+            text = text.replace('\u200b', '').replace('\u200c', '').replace(
+                '\u200d', '').replace('\ufeff', '').strip()
+
+            # Alternatively,
+            # text = text.encode('ascii', 'ignore').decode()
+
+            # Needed for auto-generated transcripts
+            text = text.replace(PROFANITY_RAW, PROFANITY_CONVERTED)
+
             if not text:
                 continue
 
