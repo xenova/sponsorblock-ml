@@ -76,8 +76,7 @@ def calculate_metrics(labelled_words, predictions):
         if index >= len(labelled_words) - 1:
             continue
 
-        # TODO make sure words with manual transcripts
-        duration = labelled_words[index+1]['start'] - word['start']
+        duration = word_end(word) - word_start(word)
 
         predicted_sponsor = False
         for p in predictions:
