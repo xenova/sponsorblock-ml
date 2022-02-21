@@ -94,6 +94,9 @@ def parse_transcript_json(json_data, granularity):
         else:
             total_event_duration_ms = event.get('dDurationMs', 0)
 
+        # Ensure duration is non-negative
+        total_event_duration_ms = max(total_event_duration_ms, 0)
+
         avg_seconds_per_character = (
             total_event_duration_ms/total_characters)/1000
 
