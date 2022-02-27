@@ -419,11 +419,11 @@ def main():
             predictions = predict(video_id, model, tokenizer,
                                   segmentation_args, classifier_args=classifier_args)
         except TranscriptError:
-            logger.warning('No transcript available for', video_id, end='\n\n')
+            logger.warning(f'No transcript available for {video_id}')
             continue
         video_url = f'https://www.youtube.com/watch?v={video_id}'
         if not predictions:
-            logger.info('No predictions found for', video_url, end='\n\n')
+            logger.info(f'No predictions found for {video_url}')
             continue
 
         # TODO use predict_args.output_as_json
