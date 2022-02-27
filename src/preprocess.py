@@ -30,6 +30,12 @@ PROFANITY_CONVERTED = '*****'  # Safer version for tokenizing
 
 NUM_DECIMALS = 3
 
+# https://www.fincher.org/Utilities/CountryLanguageList.shtml
+# https://lingohub.com/developers/supported-locales/language-designators-with-regions
+LANGUAGE_PREFERENCE_LIST = ['en-GB', 'en-US', 'en-CA', 'en-AU', 'en-NZ', 'en-ZA',
+                            'en-IE', 'en-IN', 'en-JM', 'en-BZ', 'en-TT', 'en-PH', 'en-ZW',
+                            'en']
+
 
 def parse_transcript_json(json_data, granularity):
     assert json_data['wireMagic'] == 'pb3'
@@ -203,9 +209,10 @@ def get_words(video_id, process=True, transcript_type='auto', fallback='manual',
             if transcript_list is not None:
                 if transcript_type == 'manual':
                     ts = transcript_list.find_manually_created_transcript(
-                        ['en-GB', 'en-US', 'en'])
+                        LANGUAGE_PREFERENCE_LIST)
                 else:
-                    ts = transcript_list.find_generated_transcript(['en'])
+                    ts = transcript_list.find_generated_transcript(
+                        LANGUAGE_PREFERENCE_LIST)
 
                 raw_transcript_json = ts._http_client.get(
                     f'{ts._url}&fmt=json3').json()
