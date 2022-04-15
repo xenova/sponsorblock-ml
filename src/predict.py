@@ -19,6 +19,7 @@ from model import get_model_tokenizer_classifier, InferenceArguments
 logging.basicConfig()
 logger = logging.getLogger(__name__)
 
+
 @dataclass
 class PredictArguments(InferenceArguments):
     video_id: str = field(
@@ -65,16 +66,19 @@ def filter_and_add_probabilities(predictions, classifier, min_probability):
             predicted_probabilities, key=predicted_probabilities.get)
         classifier_probability = predicted_probabilities[classifier_category]
 
-        if classifier_category == 'none' and classifier_probability > min_probability:
-            continue  # Ignore
-
         if (prediction['category'] not in predicted_probabilities) \
                 or (classifier_category != 'none' and classifier_probability > 0.5):  # TODO make param
             # Unknown category or we are confident enough to overrule,
             # so change category to what was predicted by classifier
             prediction['category'] = classifier_category
 
+        if prediction['category'] == 'none':
+            continue  # Ignore if categorised as nothing
+
         prediction['probability'] = predicted_probabilities[prediction['category']]
+
+        if min_probability is not None and prediction['probability'] < min_probability:
+            continue  # Ignore if below threshold
 
         # TODO add probabilities, but remove None and normalise rest
         prediction['probabilities'] = predicted_probabilities
