@@ -76,11 +76,14 @@ _SEGMENT_END = END_SEGMENT_TEMPLATE.format(r'\w+')
 SEGMENT_MATCH_RE = fr'{_SEGMENT_START}\s*(?P<text>.*?)\s*(?:{_SEGMENT_END}|$)'
 
 
-def extract_sponsor_matches(text):
-    if CustomTokens.NO_SEGMENT.value in text:
-        return []
-
-    return re_findall(SEGMENT_MATCH_RE, text)
+def extract_sponsor_matches(texts):
+    to_return = []
+    for text in texts:
+        if CustomTokens.NO_SEGMENT.value in text:
+            to_return.append([])
+        else:
+            to_return.append(re_findall(SEGMENT_MATCH_RE, text))
+    return to_return
 
 
 @dataclass

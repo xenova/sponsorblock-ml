@@ -135,43 +135,57 @@ def greedy_match(list, sublist):
     return best_i, best_j, best_k
 
 
-def predict_sponsor_text(text, model, tokenizer):
+def predict_sponsor_from_texts(texts, model, tokenizer):
+    clean_texts = list(map(preprocess.clean_text, texts))
+    return predict_sponsor_from_cleaned_texts(clean_texts, model, tokenizer)
+
+
+def predict_sponsor_from_cleaned_texts(cleaned_texts, model, tokenizer):
     """Given a body of text, predict the words which are part of the sponsor"""
     model_device = next(model.parameters()).device
-    input_ids = tokenizer(
-        f'{CustomTokens.EXTRACT_SEGMENTS_PREFIX.value} {text}', return_tensors='pt', truncation=True).input_ids.to(model_device)
 
-    max_out_len = round(min(
-        max(
-            len(input_ids[0])/SAFETY_TOKENS_PERCENTAGE,
-            len(input_ids[0]) + MIN_SAFETY_TOKENS
-        ),
-        model.model_dim))
-    outputs = model.generate(input_ids, max_length=max_out_len)
+    decoded_outputs = []
+    # Do individually, to avoid running out of memory for long videos
+    for cleaned_words in cleaned_texts:
+        text = CustomTokens.EXTRACT_SEGMENTS_PREFIX.value + \
+            ' '.join(cleaned_words)
+        input_ids = tokenizer(text, return_tensors='pt',
+                              truncation=True).input_ids.to(model_device)
 
-    return tokenizer.decode(outputs[0], skip_special_tokens=True)
+        # Optimise output length so that we do not generate unnecessarily long texts
+        max_out_len = round(min(
+            max(
+                len(input_ids[0])/SAFETY_TOKENS_PERCENTAGE,
+                len(input_ids[0]) + MIN_SAFETY_TOKENS
+            ),
+            model.model_dim)
+        )
 
+        outputs = model.generate(input_ids, max_length=max_out_len)
+        decoded_outputs.append(tokenizer.decode(
+            outputs[0], skip_special_tokens=True))
 
-def predict_sponsor_matches(text, model, tokenizer):
-    sponsorship_text = predict_sponsor_text(text, model, tokenizer)
-    return extract_sponsor_matches(sponsorship_text)
+    return decoded_outputs
 
 
 def segments_to_predictions(segments, model, tokenizer):
     predicted_time_ranges = []
 
-    # TODO pass to model simultaneously, not in for loop
-    # use 2d array for input ids
-    for segment in segments:
-        cleaned_batch = [preprocess.clean_text(
-            word['text']) for word in segment]
-        batch_text = ' '.join(cleaned_batch)
+    cleaned_texts = [
+        [x['cleaned'] for x in cleaned_segment]
+        for cleaned_segment in segments
+    ]
 
-        matches = predict_sponsor_matches(batch_text, model, tokenizer)
+    sponsorship_texts = predict_sponsor_from_cleaned_texts(
+        cleaned_texts, model, tokenizer)
 
-        for match in matches:
+    matches = extract_sponsor_matches(sponsorship_texts)
+
+    for segment_matches, cleaned_batch, segment in zip(matches, cleaned_texts, segments):
+
+        for match in segment_matches:  # one segment might contain multiple sponsors/ir/selfpromos
+
             matched_text = match['text'].split()
-            # TODO skip if too short
 
             i1, j1, k1 = greedy_match(
                 cleaned_batch, matched_text[:MATCH_WINDOW])
@@ -179,7 +193,6 @@ def segments_to_predictions(segments, model, tokenizer):
                 cleaned_batch, matched_text[-MATCH_WINDOW:])
 
             extracted_words = segment[i1:i2+k2]
-
             if not extracted_words:
                 continue
 
