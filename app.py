@@ -12,11 +12,10 @@ from urllib.parse import quote
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'src'))  # noqa
 
 from preprocess import get_words
-from predict import SegmentationArguments, ClassifierArguments, predict as pred
-from evaluate import EvaluationArguments
-from shared import seconds_to_time, CATGEGORY_OPTIONS
+from predict import PredictArguments, SegmentationArguments, predict as pred
+from shared import GeneralArguments, seconds_to_time, CATGEGORY_OPTIONS
 from utils import regex_search
-from model import get_model_tokenizer
+from model import get_model_tokenizer_classifier
 from errors import TranscriptError
 
 st.set_page_config(
@@ -104,7 +103,7 @@ for m in MODELS:
         prediction_cache[m] = {}
 
 
-CLASSIFIER_PATH = 'Xenova/sponsorblock-classifier'
+CLASSIFIER_PATH = 'Xenova/sponsorblock-classifier-v2'
 
 
 TRANSCRIPT_TYPES = {
@@ -122,15 +121,15 @@ TRANSCRIPT_TYPES = {
 }
 
 
-def predict_function(model_id, model, tokenizer, segmentation_args, classifier_args, video_id, words, ts_type_id):
+def predict_function(model_id, model, tokenizer, segmentation_args, classifier, video_id, words, ts_type_id):
     cache_id = f'{video_id}_{ts_type_id}'
 
     if cache_id not in prediction_cache[model_id]:
         prediction_cache[model_id][cache_id] = pred(
             video_id, model, tokenizer,
             segmentation_args=segmentation_args,
-            classifier_args=classifier_args,
-            words=words
+            words=words,
+            classifier=classifier
         )
     return prediction_cache[model_id][cache_id]
 
@@ -140,15 +139,15 @@ def load_predict(model_id):
 
     if model_id not in prediction_function_cache:
         # Use default segmentation and classification arguments
-        evaluation_args = EvaluationArguments(model_path=model_info['repo_id'])
+        predict_args = PredictArguments(model_name_or_path=model_info['repo_id'])
+        general_args = GeneralArguments()
         segmentation_args = SegmentationArguments()
-        classifier_args = ClassifierArguments(
-            min_probability=0)  # Filtering done later
 
-        model, tokenizer = get_model_tokenizer(evaluation_args.model_path)
+        model, tokenizer, classifier = get_model_tokenizer_classifier(predict_args, general_args)
 
         prediction_function_cache[model_id] = partial(
-            predict_function, model_id, model, tokenizer, segmentation_args, classifier_args)
+            predict_function, model_id, model, tokenizer, segmentation_args, classifier)
+
 
     return prediction_function_cache[model_id]
 
@@ -252,7 +251,8 @@ def main():
 
         submit_segments = []
         for index, prediction in enumerate(predictions, start=1):
-            if prediction['category'] not in categories:
+            category_key = prediction['category'].upper()
+            if category_key not in categories:
                 continue  # Skip
 
             confidence = prediction['probability'] * 100
@@ -262,13 +262,13 @@ def main():
 
             submit_segments.append({
                 'segment': [prediction['start'], prediction['end']],
-                'category': prediction['category'].lower(),
+                'category': prediction['category'],
                 'actionType': 'skip'
             })
             start_time = seconds_to_time(prediction['start'])
             end_time = seconds_to_time(prediction['end'])
             with st.expander(
-                f"[{prediction['category']}] Prediction #{index} ({start_time} \u2192 {end_time})"
+                f"[{category_key}] Prediction #{index} ({start_time} \u2192 {end_time})"
             ):
 
                 url = f"https://www.youtube-nocookie.com/embed/{video_id}?&start={floor(prediction['start'])}&end={ceil(prediction['end'])}"
@@ -280,7 +280,7 @@ def main():
                 text = ' '.join(w['text'] for w in prediction['words'])
                 st.write(f"**Times:** {start_time} \u2192 {end_time}")
                 st.write(
-                    f"**Category:** {CATGEGORY_OPTIONS[prediction['category']]}")
+                    f"**Category:** {CATGEGORY_OPTIONS[category_key]}")
                 st.write(f"**Confidence:** {confidence:.2f}%")
                 st.write(f'**Text:** "{text}"')
 
