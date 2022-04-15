@@ -420,6 +420,14 @@ class PreprocessArguments:
     do_split: bool = field(
         default=False, metadata={'help': 'Generate training, testing and validation data.'}
     )
+
+    positive_file: Optional[str] = field(
+        default='sponsor_segments.json', metadata={'help': 'File to output sponsored segments to (a jsonlines file).'}
+    )
+    negative_file: Optional[str] = field(
+        default='normal_segments.json', metadata={'help': 'File to output normal segments to (a jsonlines file).'}
+    )
+
     percentage_positive: float = field(
         default=0.5, metadata={'help': 'Ratio of positive (sponsor) segments to include in final output'})
 
@@ -488,29 +496,6 @@ def download_file(url, filename):
     return total_bytes == os.path.getsize(filename)
 
 
-@dataclass
-class PreprocessingDatasetArguments(DatasetArguments):
-    # excess_file: Optional[str] = field(
-    #     default='excess.json',
-    #     metadata={
-    #         'help': 'The excess segments left after the split'
-    #     },
-    # )
-
-    positive_file: Optional[str] = field(
-        default='sponsor_segments.json', metadata={'help': 'File to output sponsored segments to (a jsonlines file).'}
-    )
-    negative_file: Optional[str] = field(
-        default='normal_segments.json', metadata={'help': 'File to output normal segments to (a jsonlines file).'}
-    )
-
-    def __post_init__(self):
-        # TODO check if train/validation datasets exist
-        if self.train_file is None and self.validation_file is None:
-            raise ValueError(
-                'Need either a dataset name or a training/validation file.')
-
-
 def main():
     # Responsible for getting transcrips using youtube_transcript_api,
     # then labelling it according to SponsorBlock's API
@@ -519,7 +504,7 @@ def main():
     # Generate final.json from sponsorTimes.csv
     hf_parser = HfArgumentParser((
         PreprocessArguments,
-        PreprocessingDatasetArguments,
+        DatasetArguments,
         segment.SegmentationArguments,
         model_module.ModelArguments,
         GeneralArguments

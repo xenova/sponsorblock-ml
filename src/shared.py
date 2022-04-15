@@ -137,7 +137,8 @@ class DatasetArguments:
     def __post_init__(self):
         if self.train_file is None or self.validation_file is None:
             raise ValueError(
-                "Need either a GLUE task, a training/validation file or a dataset name.")
+                'Need either a dataset name or a training/validation file.')
+
         else:
             train_extension = self.train_file.split(".")[-1]
             assert train_extension in [
