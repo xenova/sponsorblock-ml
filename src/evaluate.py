@@ -1,10 +1,10 @@
 
-from model import get_model_tokenizer
+from model import get_model_tokenizer_classifier, InferenceArguments
 from utils import jaccard
 from transformers import HfArgumentParser
-from preprocess import DatasetArguments, get_words
-from shared import GeneralArguments
-from predict import ClassifierArguments, predict, InferenceArguments
+from preprocess import get_words
+from shared import GeneralArguments, DatasetArguments
+from predict import predict
 from segment import extract_segment, word_start, word_end, SegmentationArguments, add_labels_to_words
 import pandas as pd
 from dataclasses import dataclass, field
@@ -134,11 +134,10 @@ def main():
         EvaluationArguments,
         DatasetArguments,
         SegmentationArguments,
-        ClassifierArguments,
         GeneralArguments
     ))
 
-    evaluation_args, dataset_args, segmentation_args, classifier_args, general_args = hf_parser.parse_args_into_dataclasses()
+    evaluation_args, dataset_args, segmentation_args, general_args = hf_parser.parse_args_into_dataclasses()
 
     # Load labelled data:
     final_path = os.path.join(
@@ -149,8 +148,8 @@ def main():
                      f'Run `python src/preprocess.py --update_database --do_create` to generate "{final_path}".')
         return
 
-    model, tokenizer = get_model_tokenizer(
-        evaluation_args.model_path, evaluation_args.cache_dir, general_args.no_cuda)
+    model, tokenizer, classifier = get_model_tokenizer_classifier(
+        evaluation_args, general_args)
 
     with open(final_path) as fp:
         final_data = json.load(fp)
@@ -187,8 +186,9 @@ def main():
                     continue
 
                 # Make predictions
-                predictions = predict(video_id, model, tokenizer,
-                                      segmentation_args, words, classifier_args)
+                predictions = predict(video_id, model, tokenizer, segmentation_args,
+                                      classifier=classifier,
+                                      min_probability=evaluation_args.min_probability)
 
                 # Get labels
                 sponsor_segments = final_data.get(video_id)

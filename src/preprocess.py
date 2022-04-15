@@ -1,14 +1,15 @@
+from shared import DatasetArguments
 from utils import jaccard
 from functools import lru_cache
 from datetime import datetime
 import itertools
-from typing import Optional, List
-from model import ModelArguments
+from typing import Optional
+import model as model_module
 import segment
 from tqdm import tqdm
 from dataclasses import dataclass, field
 from transformers import HfArgumentParser
-from shared import ACTION_OPTIONS, CATGEGORY_OPTIONS, START_SEGMENT_TEMPLATE, END_SEGMENT_TEMPLATE, GeneralArguments, CustomTokens
+from shared import extract_sponsor_matches, ACTION_OPTIONS, CATEGORIES, CATGEGORY_OPTIONS, START_SEGMENT_TEMPLATE, END_SEGMENT_TEMPLATE, GeneralArguments, CustomTokens
 import csv
 import re
 import random
@@ -213,9 +214,10 @@ def get_words(video_id, process=True, transcript_type='auto', fallback='manual',
                 else:
                     ts = transcript_list.find_generated_transcript(
                         LANGUAGE_PREFERENCE_LIST)
-
-                raw_transcript_json = ts._http_client.get(
-                    f'{ts._url}&fmt=json3').json()
+                raw_transcript = ts._http_client.get(
+                    f'{ts._url}&fmt=json3').content
+                if raw_transcript:
+                    raw_transcript_json = json.loads(raw_transcript)
 
     except (TooManyRequests, YouTubeRequestFailed):
         raise  # Cannot recover from these errors and do not mark as empty transcript
@@ -386,8 +388,13 @@ class PreprocessArguments:
 
     max_date: str = field(
         # default='01/01/9999', # Include all
-        default='02/02/2022',
+        default='01/03/2022',
         metadata={'help': 'Only use videos that have some segment from before this date (exclusive). This allows for videos to have segments be corrected, but ignores new videos (posted after this date) to enter the pool.'})
+
+    # max_unseen_date: str = field( # TODO
+    #     default='02/03/2022',
+    #     metadata={'help': 'Generate test and validation data from `max_date` to `max_unseen_date`'})
+    # Specify min/max video id for splitting (seen vs. unseen)
 
     keep_duplicate_segments: bool = field(
         default=False, metadata={'help': 'Keep duplicate segments'}
@@ -482,25 +489,7 @@ def download_file(url, filename):
 
 
 @dataclass
-class DatasetArguments:
-    data_dir: Optional[str] = field(
-        default='data',
-        metadata={
-            'help': 'The directory which stores train, test and/or validation data.'
-        },
-    )
-    processed_file: Optional[str] = field(
-        default='segments.json',
-        metadata={
-            'help': 'Processed data file'
-        },
-    )
-    processed_database: Optional[str] = field(
-        default='processed_database.json',
-        metadata={
-            'help': 'Processed database file'
-        },
-    )
+class PreprocessingDatasetArguments(DatasetArguments):
 
     train_file: Optional[str] = field(
         default='train.json', metadata={'help': 'The input training data file (a jsonlines file).'}
@@ -508,21 +497,38 @@ class DatasetArguments:
     validation_file: Optional[str] = field(
         default='valid.json',
         metadata={
-            'help': 'An optional input evaluation data file to evaluate the metrics (rouge) on (a jsonlines file).'
+            'help': 'An optional input evaluation data file to evaluate the metrics on (a jsonlines file).'
         },
     )
     test_file: Optional[str] = field(
         default='test.json',
         metadata={
-            'help': 'An optional input test data file to evaluate the metrics (rouge) on (a jsonlines file).'
+            'help': 'An optional input test data file to evaluate the metrics on (a jsonlines file).'
         },
     )
-    excess_file: Optional[str] = field(
-        default='excess.json',
+
+    c_train_file: Optional[str] = field(
+        default='c_train.json', metadata={'help': 'The input training data file (a jsonlines file).'}
+    )
+    c_validation_file: Optional[str] = field(
+        default='c_valid.json',
         metadata={
-            'help': 'The excess segments left after the split'
+            'help': 'An optional input evaluation data file to evaluate the metrics on (a jsonlines file).'
         },
     )
+    c_test_file: Optional[str] = field(
+        default='c_test.json',
+        metadata={
+            'help': 'An optional input test data file to evaluate the metrics on (a jsonlines file).'
+        },
+    )
+
+    # excess_file: Optional[str] = field(
+    #     default='excess.json',
+    #     metadata={
+    #         'help': 'The excess segments left after the split'
+    #     },
+    # )
     dataset_cache_dir: Optional[str] = field(
         default=None,
         metadata={
@@ -555,9 +561,9 @@ def main():
     # Generate final.json from sponsorTimes.csv
     hf_parser = HfArgumentParser((
         PreprocessArguments,
-        DatasetArguments,
+        PreprocessingDatasetArguments,
         segment.SegmentationArguments,
-        ModelArguments,
+        model_module.ModelArguments,
         GeneralArguments
     ))
     preprocess_args, dataset_args, segmentation_args, model_args, general_args = hf_parser.parse_args_into_dataclasses()
@@ -821,8 +827,7 @@ def main():
         # , max_videos, max_segments
 
         from model import get_model_tokenizer
-        model, tokenizer = get_model_tokenizer(
-            model_args.model_name_or_path, model_args.cache_dir, general_args.no_cuda)
+        model, tokenizer = get_model_tokenizer(model_args, general_args)
 
         # TODO
         # count_videos = 0
@@ -871,8 +876,9 @@ def main():
                         continue
 
                     d = {
-                        'video_index': offset + start_index,
+                        # 'video_index': offset + start_index,
                         'video_id': video_id,
+                        # 'uuid': video_id, # TODO add uuid
                         'text': ' '.join(x['cleaned'] for x in seg),
                         'start': seg_start,
                         'end': seg_end,
@@ -919,7 +925,7 @@ def main():
             z = int(preprocess_args.percentage_positive /
                     percentage_negative * len(non_sponsors))
 
-            excess = sponsors[z:]
+            # excess = sponsors[z:]
             sponsors = sponsors[:z]
 
         else:
@@ -927,7 +933,7 @@ def main():
             z = int(percentage_negative /
                     preprocess_args.percentage_positive * len(sponsors))
 
-            excess = non_sponsors[z:]
+            # excess = non_sponsors[z:]
             non_sponsors = non_sponsors[:z]
 
         logger.info('Join')
@@ -935,6 +941,7 @@ def main():
 
         random.shuffle(all_labelled_segments)
 
+        # TODO split based on video ids
         logger.info('Split')
         ratios = [preprocess_args.train_split,
                   preprocess_args.test_split,
@@ -958,15 +965,52 @@ def main():
             else:
                 logger.info(f'Skipping {name}')
 
+        classifier_splits = {
+            dataset_args.c_train_file: train_data,
+            dataset_args.c_test_file: test_data,
+            dataset_args.c_validation_file: valid_data
+        }
+
+        none_category = CATEGORIES.index(None)
+
+        # Output training, testing and validation data
+        for name, items in classifier_splits.items():
+            outfile = os.path.join(dataset_args.data_dir, name)
+            if not os.path.exists(outfile) or preprocess_args.overwrite:
+                with open(outfile, 'w', encoding='utf-8') as fp:
+                    for i in items:
+                        x = json.loads(i)  # TODO add uuid
+                        labelled_items = []
+
+                        matches = extract_sponsor_matches(x['extracted'])
+
+                        if x['extracted'] == CustomTokens.NO_SEGMENT.value:
+                            labelled_items.append({
+                                'text': x['text'],
+                                'label': none_category
+                            })
+                        else:
+                            for match in matches:
+                                labelled_items.append({
+                                    'text': match['text'],
+                                    'label': CATEGORIES.index(match['category'])
+                                })
+
+                        for labelled_item in labelled_items:
+                            print(json.dumps(labelled_item), file=fp)
+
+            else:
+                logger.info(f'Skipping {name}')
+
         logger.info('Write')
         # Save excess items
-        excess_path = os.path.join(
-            dataset_args.data_dir, dataset_args.excess_file)
-        if not os.path.exists(excess_path) or preprocess_args.overwrite:
-            with open(excess_path, 'w', encoding='utf-8') as fp:
-                fp.writelines(excess)
-        else:
-            logger.info(f'Skipping {dataset_args.excess_file}')
+        # excess_path = os.path.join(
+        #     dataset_args.data_dir, dataset_args.excess_file)
+        # if not os.path.exists(excess_path) or preprocess_args.overwrite:
+        #     with open(excess_path, 'w', encoding='utf-8') as fp:
+        #         fp.writelines(excess)
+        # else:
+        #     logger.info(f'Skipping {dataset_args.excess_file}')
 
         logger.info(
             f'Finished splitting: {len(sponsors)} sponsors, {len(non_sponsors)} non sponsors')

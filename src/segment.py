@@ -121,6 +121,8 @@ def generate_segments(words, tokenizer, segmentation_args):
 
 def extract_segment(words, start, end, map_function=None):
     """Extracts all words with time in [start, end]"""
+    if words is None:
+        words = []
 
     a = max(binary_search_below(words, 0, len(words), start), 0)
     b = min(binary_search_above(words, -1, len(words) - 1, end) + 1, len(words))

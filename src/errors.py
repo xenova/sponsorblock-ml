@@ -1,9 +1,10 @@
+
 class SponsorBlockException(Exception):
     """Base class for all sponsor block exceptions"""
     pass
 
 
-class PredictionException(SponsorBlockException):
+class InferenceException(SponsorBlockException):
     """An exception occurred while predicting sponsor segments"""
     pass
 
@@ -20,9 +21,4 @@ class ModelError(SponsorBlockException):
 
 class ModelLoadError(ModelError):
     """An exception occurred while loading the model"""
-    pass
-
-
-class ClassifierLoadError(ModelError):
-    """An exception occurred while loading the classifier"""
     pass
