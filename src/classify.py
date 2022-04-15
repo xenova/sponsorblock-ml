@@ -6,6 +6,8 @@ import segment
 class SponsorBlockClassificationPipeline(TextClassificationPipeline):
     def __init__(self, model, tokenizer):
         device = next(model.parameters()).device.index
+        if device is None:
+            device = -1
         super().__init__(model=model, tokenizer=tokenizer,
                          return_all_scores=True, truncation=True, device=device)
 
