@@ -1,12 +1,17 @@
 from preprocess import PreprocessingDatasetArguments
-from shared import CustomTokens, load_datasets, CustomTrainingArguments, get_last_checkpoint, train_from_checkpoint
+from shared import (
+    CustomTokens,
+    prepare_datasets,
+    load_datasets,
+    CustomTrainingArguments,
+    get_last_checkpoint,
+    train_from_checkpoint
+)
 from model import ModelArguments
 import transformers
 import logging
 import os
 import sys
-from dataclasses import dataclass, field
-from typing import Optional
 from datasets import utils as d_utils
 from transformers import (
     DataCollatorForSeq2Seq,
@@ -35,38 +40,6 @@ logging.basicConfig(
 )
 
 
-
-@dataclass
-class DataTrainingArguments:
-    """
-    Arguments pertaining to what data we are going to input our model for training and eval.
-    """
-
-    preprocessing_num_workers: Optional[int] = field(
-        default=None,
-        metadata={'help': 'The number of processes to use for the preprocessing.'},
-    )
-
-    max_train_samples: Optional[int] = field(
-        default=None,
-        metadata={
-            'help': 'For debugging purposes or quicker training, truncate the number of training examples to this value if set.'
-        },
-    )
-    max_eval_samples: Optional[int] = field(
-        default=None,
-        metadata={
-            'help': 'For debugging purposes or quicker training, truncate the number of evaluation examples to this value if set.'
-        },
-    )
-    max_predict_samples: Optional[int] = field(
-        default=None,
-        metadata={
-            'help': 'For debugging purposes or quicker training, truncate the number of prediction examples to this value if set.'
-        },
-    )
-
-
 def main():
 
     # See all possible arguments in src/transformers/training_args.py
@@ -76,10 +49,9 @@ def main():
     hf_parser = HfArgumentParser((
         ModelArguments,
         PreprocessingDatasetArguments,
-        DataTrainingArguments,
         CustomTrainingArguments
     ))
-    model_args, dataset_args, data_training_args, training_args = hf_parser.parse_args_into_dataclasses()
+    model_args, dataset_args, training_args = hf_parser.parse_args_into_dataclasses()
 
     log_level = training_args.get_process_log_level()
     logger.setLevel(log_level)
@@ -128,7 +100,6 @@ def main():
     # See more about loading any type of standard or custom dataset (from files, python dict, pandas DataFrame, etc) at
     # https://huggingface.co/docs/datasets/loading_datasets.html.
 
-
     # Detecting last checkpoint.
     last_checkpoint = get_last_checkpoint(training_args)
 
@@ -165,47 +136,8 @@ def main():
 
         return model_inputs
 
-    def prepare_dataset(dataset, desc):
-        return dataset.map(
-            preprocess_function,
-            batched=True,
-            num_proc=data_training_args.preprocessing_num_workers,
-            remove_columns=column_names,
-            load_from_cache_file=not dataset_args.overwrite_cache,
-            desc=desc,  # tokenizing train dataset
-        )
-    # train_dataset # TODO shuffle?
-
-    # if training_args.do_train:
-    if 'train' not in raw_datasets:  # TODO do checks above?
-        raise ValueError('Train dataset missing')
-    train_dataset = raw_datasets['train']
-    if data_training_args.max_train_samples is not None:
-        train_dataset = train_dataset.select(
-            range(data_training_args.max_train_samples))
-    with training_args.main_process_first(desc='train dataset map pre-processing'):
-        train_dataset = prepare_dataset(
-            train_dataset, desc='Running tokenizer on train dataset')
-
-    if 'validation' not in raw_datasets:
-        raise ValueError('Validation dataset missing')
-    eval_dataset = raw_datasets['validation']
-    if data_training_args.max_eval_samples is not None:
-        eval_dataset = eval_dataset.select(
-            range(data_training_args.max_eval_samples))
-    with training_args.main_process_first(desc='validation dataset map pre-processing'):
-        eval_dataset = prepare_dataset(
-            eval_dataset, desc='Running tokenizer on validation dataset')
-
-    if 'test' not in raw_datasets:
-        raise ValueError('Test dataset missing')
-    predict_dataset = raw_datasets['test']
-    if data_training_args.max_predict_samples is not None:
-        predict_dataset = predict_dataset.select(
-            range(data_training_args.max_predict_samples))
-    with training_args.main_process_first(desc='prediction dataset map pre-processing'):
-        predict_dataset = prepare_dataset(
-            predict_dataset, desc='Running tokenizer on prediction dataset')
+    train_dataset, eval_dataset, predict_dataset = prepare_datasets(
+        raw_datasets, dataset_args, training_args, preprocess_function)
 
     # Data collator
     data_collator = DataCollatorForSeq2Seq(
@@ -228,10 +160,11 @@ def main():
     )
 
     # Training
-    train_result = train_from_checkpoint(trainer, last_checkpoint, training_args)
+    train_result = train_from_checkpoint(
+        trainer, last_checkpoint, training_args)
 
     metrics = train_result.metrics
-    max_train_samples = data_training_args.max_train_samples or len(
+    max_train_samples = training_args.max_train_samples or len(
         train_dataset)
     metrics['train_samples'] = min(max_train_samples, len(train_dataset))
 
@@ -240,7 +173,7 @@ def main():
     trainer.save_state()
 
     kwargs = {'finetuned_from': model_args.model_name_or_path,
-                'tasks': 'summarization'}
+              'tasks': 'summarization'}
 
     if training_args.push_to_hub:
         trainer.push_to_hub(**kwargs)

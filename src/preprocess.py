@@ -490,54 +490,12 @@ def download_file(url, filename):
 
 @dataclass
 class PreprocessingDatasetArguments(DatasetArguments):
-
-    train_file: Optional[str] = field(
-        default='train.json', metadata={'help': 'The input training data file (a jsonlines file).'}
-    )
-    validation_file: Optional[str] = field(
-        default='valid.json',
-        metadata={
-            'help': 'An optional input evaluation data file to evaluate the metrics on (a jsonlines file).'
-        },
-    )
-    test_file: Optional[str] = field(
-        default='test.json',
-        metadata={
-            'help': 'An optional input test data file to evaluate the metrics on (a jsonlines file).'
-        },
-    )
-
-    c_train_file: Optional[str] = field(
-        default='c_train.json', metadata={'help': 'The input training data file (a jsonlines file).'}
-    )
-    c_validation_file: Optional[str] = field(
-        default='c_valid.json',
-        metadata={
-            'help': 'An optional input evaluation data file to evaluate the metrics on (a jsonlines file).'
-        },
-    )
-    c_test_file: Optional[str] = field(
-        default='c_test.json',
-        metadata={
-            'help': 'An optional input test data file to evaluate the metrics on (a jsonlines file).'
-        },
-    )
-
     # excess_file: Optional[str] = field(
     #     default='excess.json',
     #     metadata={
     #         'help': 'The excess segments left after the split'
     #     },
     # )
-    dataset_cache_dir: Optional[str] = field(
-        default=None,
-        metadata={
-            'help': 'Where to store the cached datasets'
-        },
-    )
-    overwrite_cache: bool = field(
-        default=False, metadata={'help': 'Overwrite the cached training and evaluation sets'}
-    )
 
     positive_file: Optional[str] = field(
         default='sponsor_segments.json', metadata={'help': 'File to output sponsored segments to (a jsonlines file).'}

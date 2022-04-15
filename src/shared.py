@@ -104,12 +104,45 @@ class DatasetArguments:
         },
     )
 
+    overwrite_cache: bool = field(
+        default=False, metadata={'help': 'Overwrite the cached training and evaluation sets'}
+    )
+
     dataset_cache_dir: Optional[str] = field(
         default=None,
         metadata={
             'help': 'Where to store the cached datasets'
         },
     )
+
+    train_file: Optional[str] = field(
+        default='train.json', metadata={'help': 'The input training data file (a jsonlines file).'}
+    )
+    validation_file: Optional[str] = field(
+        default='valid.json',
+        metadata={
+            'help': 'An optional input evaluation data file to evaluate the metrics on (a jsonlines file).'
+        },
+    )
+    test_file: Optional[str] = field(
+        default='test.json',
+        metadata={
+            'help': 'An optional input test data file to evaluate the metrics on (a jsonlines file).'
+        },
+    )
+
+    def __post_init__(self):
+        if self.train_file is None or self.validation_file is None:
+            raise ValueError(
+                "Need either a GLUE task, a training/validation file or a dataset name.")
+        else:
+            train_extension = self.train_file.split(".")[-1]
+            assert train_extension in [
+                "csv", "json"], "`train_file` should be a csv or a json file."
+            validation_extension = self.validation_file.split(".")[-1]
+            assert (
+                validation_extension == train_extension
+            ), "`validation_file` should have the same extension (csv or json) as `train_file`."
 
 
 @dataclass
@@ -178,7 +211,7 @@ def reset():
     print(torch.cuda.memory_summary(device=None, abbreviated=False))
 
 
-def load_datasets(dataset_args):
+def load_datasets(dataset_args: DatasetArguments):
 
     print('Reading datasets')
     data_files = {}
@@ -240,6 +273,39 @@ class CustomTrainingArguments(OutputArguments, TrainingArguments):
     #     * :obj:`"steps"`: Evaluation is done (and logged) every :obj:`eval_steps`.
     #     * :obj:`"epoch"`: Evaluation is done at the end of each epoch.
 
+    preprocessing_num_workers: Optional[int] = field(
+        default=None,
+        metadata={'help': 'The number of processes to use for the preprocessing.'},
+    )
+    max_seq_length: int = field(
+        default=512,
+        metadata={
+            "help": "The maximum total input sequence length after tokenization. Sequences longer "
+            "than this will be truncated, sequences shorter will be padded."
+        },
+    )
+    max_train_samples: Optional[int] = field(
+        default=None,
+        metadata={
+            "help": "For debugging purposes or quicker training, truncate the number of training examples to this "
+            "value if set."
+        },
+    )
+    max_eval_samples: Optional[int] = field(
+        default=None,
+        metadata={
+            "help": "For debugging purposes or quicker training, truncate the number of evaluation examples to this "
+            "value if set."
+        },
+    )
+    max_predict_samples: Optional[int] = field(
+        default=None,
+        metadata={
+            "help": "For debugging purposes or quicker training, truncate the number of prediction examples to this "
+            "value if set."
+        },
+    )
+
 
 logging.basicConfig()
 logger = logging.getLogger(__name__)
@@ -279,3 +345,37 @@ def train_from_checkpoint(trainer, last_checkpoint, training_args):
     trainer.save_model()  # Saves the tokenizer too for easy upload
 
     return train_result
+
+
+def prepare_datasets(raw_datasets, dataset_args: DatasetArguments, training_args: CustomTrainingArguments, preprocess_function):
+
+    with training_args.main_process_first(desc="dataset map pre-processing"):
+        raw_datasets = raw_datasets.map(
+            preprocess_function,
+            batched=True,
+            load_from_cache_file=not dataset_args.overwrite_cache,
+            desc="Running tokenizer on dataset",
+        )
+
+    if 'train' not in raw_datasets:
+        raise ValueError('Train dataset missing')
+    train_dataset = raw_datasets['train']
+    if training_args.max_train_samples is not None:
+        train_dataset = train_dataset.select(
+            range(training_args.max_train_samples))
+
+    if 'validation' not in raw_datasets:
+        raise ValueError('Validation dataset missing')
+    eval_dataset = raw_datasets['validation']
+    if training_args.max_eval_samples is not None:
+        eval_dataset = eval_dataset.select(
+            range(training_args.max_eval_samples))
+
+    if 'test' not in raw_datasets:
+        raise ValueError('Test dataset missing')
+    predict_dataset = raw_datasets['test']
+    if training_args.max_predict_samples is not None:
+        predict_dataset = predict_dataset.select(
+            range(training_args.max_predict_samples))
+
+    return train_dataset, eval_dataset, predict_dataset
