@@ -108,7 +108,6 @@ def main():
 
     # Preprocessing the datasets.
     # We need to tokenize inputs and targets.
-    column_names = raw_datasets['train'].column_names
 
     prefix = CustomTokens.EXTRACT_SEGMENTS_PREFIX.value
 
