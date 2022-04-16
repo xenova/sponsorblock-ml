@@ -373,6 +373,15 @@ class PreprocessArguments:
     # Downvotes will make this negative.
     # 1 = At least one positive vote
 
+    max_segment_duration: float = field(
+        default=180, # 3 minutes
+        # >180 => 2.8%
+        # >200 => 2.1%
+        # >250 => 1.1%
+        # >300 => 0.06%
+        metadata={'help': 'Ignore all segments whose duration in seconds is longer than this value (negative means no limit)'})
+
+
     min_views: int = field(
         default=5, metadata={'help': 'Minimum number of views a segment must have to be considered. 0 = show all'})
 
@@ -388,7 +397,7 @@ class PreprocessArguments:
 
     max_date: str = field(
         # default='01/01/9999', # Include all
-        default='01/03/2022',
+        default='15/04/2022',
         metadata={'help': 'Only use videos that have some segment from before this date (exclusive). This allows for videos to have segments be corrected, but ignores new videos (posted after this date) to enter the pool.'})
 
     # max_unseen_date: str = field( # TODO
@@ -606,8 +615,13 @@ def main():
         min_date = datetime.strptime(preprocess_args.min_date, '%d/%m/%Y')
         max_date = datetime.strptime(preprocess_args.max_date, '%d/%m/%Y')
         for key in list(db):
-
-            if any(datetime.fromtimestamp(x['submission_time']) < min_date for x in db[key]):
+            if preprocess_args.max_segment_duration >= 0 and any(x['end'] - x['start'] > preprocess_args.max_segment_duration for x in db[key]):
+                # Remove videos that have at least one segment that is longer than
+                # the maximum allowed segment duration. This avoids introducing
+                # segments into training that might contain ignored context (since
+                # they are too long, so the middle might be normal content)
+                del db[key]
+            elif any(datetime.fromtimestamp(x['submission_time']) < min_date for x in db[key]):
                 # Remove videos where any of its segments were submitted before min_date
                 # (essentially removes videos uploaded before min_date)
                 # Prevents issues where some segments of a video are excluded
@@ -759,9 +773,9 @@ def main():
     # TODO use overwrite param
 
     positive_file = os.path.join(
-        dataset_args.data_dir, dataset_args.positive_file)
+        dataset_args.data_dir, preprocess_args.positive_file)
     negative_file = os.path.join(
-        dataset_args.data_dir, dataset_args.negative_file)
+        dataset_args.data_dir, preprocess_args.negative_file)
 
     if preprocess_args.do_generate:
         logger.info('Generating')
