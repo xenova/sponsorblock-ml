@@ -1,6 +1,5 @@
 from transformers import AutoModelForSeq2SeqLM, AutoTokenizer, AutoConfig, AutoModelForSequenceClassification, TrainingArguments
 from shared import CustomTokens, GeneralArguments
-from functools import lru_cache
 from dataclasses import dataclass, field
 from typing import Optional, Union
 import torch
@@ -72,6 +71,7 @@ class ModelArguments:
     """
 
     model_name_or_path: str = field(
+        default=None,
         metadata={
             'help': 'Path to pretrained model or model identifier from huggingface.co/models'
         }
@@ -104,7 +104,7 @@ class ModelArguments:
     )
 
 import itertools
-from errors import InferenceException
+from errors import InferenceException, ModelLoadError
 
 @dataclass
 class InferenceArguments(ModelArguments):
@@ -191,6 +191,9 @@ def get_model_tokenizer_classifier(inference_args: InferenceArguments, general_a
 
 
 def get_model_tokenizer(model_args: ModelArguments, general_args: Union[GeneralArguments, TrainingArguments] = None, config_args=None, model_type='seq2seq'):
+    if model_args.model_name_or_path is None:
+        raise ModelLoadError('Must specify --model_name_or_path')
+
     if config_args is None:
         config_args = {}
 

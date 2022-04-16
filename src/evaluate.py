@@ -38,24 +38,15 @@ def attach_predictions_to_sponsor_segments(predictions, sponsor_segments):
         prediction['best_overlap'] = 0
         prediction['best_sponsorship'] = None
 
-    # Assign predictions to actual (labelled) sponsored segments
-    for sponsor_segment in sponsor_segments:
-        sponsor_segment['best_overlap'] = 0
-        sponsor_segment['best_prediction'] = None
-
-        for prediction in predictions:
-
+        # Assign predictions to actual (labelled) sponsored segments
+        for sponsor_segment in sponsor_segments:
             j = jaccard(prediction['start'], prediction['end'],
                         sponsor_segment['start'], sponsor_segment['end'])
-            if sponsor_segment['best_overlap'] < j:
-                sponsor_segment['best_overlap'] = j
-                sponsor_segment['best_prediction'] = prediction
-
             if prediction['best_overlap'] < j:
                 prediction['best_overlap'] = j
                 prediction['best_sponsorship'] = sponsor_segment
 
-    return sponsor_segments
+    # return sponsor_segments
 
 
 def calculate_metrics(labelled_words, predictions):
@@ -212,19 +203,55 @@ def main():
                         'f-score': total_fscore/len(out_metrics)
                     })
 
-                    labelled_predicted_segments = attach_predictions_to_sponsor_segments(
+                    attach_predictions_to_sponsor_segments(
                         predictions, sponsor_segments)
 
                     # Identify possible issues:
                     missed_segments = [
                         prediction for prediction in predictions if prediction['best_sponsorship'] is None]
-                    incorrect_segments = [
-                        seg for seg in labelled_predicted_segments if seg['best_prediction'] is None]
 
-                    # Add words to incorrect segments
-                    for seg in incorrect_segments:
-                        seg['words'] = extract_segment(
-                            words, seg['start'], seg['end'])
+                    # Now, check for incorrect segments using the classifier
+                    incorrect_segments = []
+
+                    segments_to_check = []
+                    texts = []  # Texts to send through tokenizer
+                    for sponsor_segment in sponsor_segments:
+                        segment_words = extract_segment(
+                            words,  sponsor_segment['start'],  sponsor_segment['end'])
+                        sponsor_segment['text'] = ' '.join(x['cleaned'] for x in segment_words)
+
+                        duration = sponsor_segment['end'] - \
+                            sponsor_segment['start']
+                        wps = len(segment_words) / \
+                            duration if duration > 0 else 0
+                        if wps < 1.5:
+                            continue
+
+                        # Do not worry about those that are locked or have enough votes
+                        # or segment['votes'] > 5:
+                        if sponsor_segment['locked']:
+                            continue
+
+                        texts.append(sponsor_segment['text'])
+                        segments_to_check.append(sponsor_segment)
+
+                    if segments_to_check:  # Segments to check
+
+                        segments_scores = classifier(texts)
+
+                        for segment, scores in zip(segments_to_check, segments_scores):
+                            prediction = max(scores, key=lambda x: x['score'])
+                            predicted_category = prediction['label'].lower()
+
+                            if predicted_category == segment['category']:
+                                continue  # Ignore correct segments
+
+                            segment.update({
+                                'predicted': predicted_category,
+                                'scores': scores
+                            })
+
+                            incorrect_segments.append(segment)
 
                 else:
                     # logger.warning(f'No labels found for {video_id}')
@@ -233,12 +260,14 @@ def main():
                     incorrect_segments = []
 
                 if missed_segments or incorrect_segments:
+                    for z in missed_segments: 
+                        # Attach original text to missed segments
+                        # (Already added to incorrect segments)
+                        z['text'] = ' '.join(x['text']
+                                             for x in z.pop('words', []))
+
                     if evaluation_args.output_as_json:
                         to_print = {'video_id': video_id}
-
-                        for z in missed_segments + incorrect_segments:
-                            z['text'] = ' '.join(x['text']
-                                                 for x in z.pop('words', []))
 
                         if missed_segments:
                             to_print['missed'] = missed_segments
@@ -257,8 +286,7 @@ def main():
                             for i, missed_segment in enumerate(missed_segments, start=1):
                                 print(f'\t#{i}:', seconds_to_time(
                                     missed_segment['start']), '-->', seconds_to_time(missed_segment['end']))
-                                print('\t\tText: "', ' '.join(
-                                    [w['text'] for w in missed_segment['words']]), '"', sep='')
+                                print('\t\tText: "', missed_segment['text'], '"', sep='')
                                 print('\t\tCategory:',
                                       missed_segment.get('category'))
                                 if 'probability' in missed_segment:
@@ -275,24 +303,29 @@ def main():
                             print(
                                 f'\tSubmit: https://www.youtube.com/watch?v={video_id}#segments={json_data}')
 
-                        # Potentially incorrect segments (model didn't predict, but in database)
+                        # Incorrect segments (in database, but incorrectly classified)
                         if incorrect_segments:
                             print(' - Incorrect segments:')
                             for i, incorrect_segment in enumerate(incorrect_segments, start=1):
                                 print(f'\t#{i}:', seconds_to_time(
                                     incorrect_segment['start']), '-->', seconds_to_time(incorrect_segment['end']))
 
-                                seg_words = extract_segment(
-                                    words, incorrect_segment['start'], incorrect_segment['end'])
-                                print('\t\tText: "', ' '.join(
-                                    [w['text'] for w in seg_words]), '"', sep='')
+                                print('\t\tText: "', incorrect_segment['text'], '"', sep='')
                                 print('\t\tUUID:', incorrect_segment['uuid'])
-                                print('\t\tCategory:',
-                                      incorrect_segment['category'])
                                 print('\t\tVotes:', incorrect_segment['votes'])
                                 print('\t\tViews:', incorrect_segment['views'])
                                 print('\t\tLocked:',
                                       incorrect_segment['locked'])
+
+                                print('\t\tCurrent Category:',
+                                      incorrect_segment['category'])
+                                print('\t\tPredicted Category:',
+                                      incorrect_segment['predicted'])
+                                print('\t\tProbabilities:')
+                                for item in incorrect_segment['scores']:
+                                    print(
+                                        f"\t\t\t{item['label']}: {item['score']}")
+
                         print()
 
     except KeyboardInterrupt:
