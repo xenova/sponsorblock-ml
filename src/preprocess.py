@@ -374,13 +374,12 @@ class PreprocessArguments:
     # 1 = At least one positive vote
 
     max_segment_duration: float = field(
-        default=180, # 3 minutes
+        default=180,  # 3 minutes
         # >180 => 2.8%
         # >200 => 2.1%
         # >250 => 1.1%
         # >300 => 0.06%
         metadata={'help': 'Ignore all segments whose duration in seconds is longer than this value (negative means no limit)'})
-
 
     min_views: int = field(
         default=5, metadata={'help': 'Minimum number of views a segment must have to be considered. 0 = show all'})
@@ -934,7 +933,8 @@ def main():
                 for item in items:
                     parsed_item = json.loads(item)  # TODO add uuid
 
-                    matches = extract_sponsor_matches_from_text(parsed_item['extracted'])
+                    matches = extract_sponsor_matches_from_text(
+                        parsed_item['extracted'])
 
                     if matches:
                         for match in matches:
@@ -947,7 +947,6 @@ def main():
                             'text': parsed_item['text'],
                             'label': none_category
                         }), file=fp)
-
 
         logger.info('Write')
         # Save excess items
