@@ -9,7 +9,7 @@ import segment
 from tqdm import tqdm
 from dataclasses import dataclass, field
 from transformers import HfArgumentParser
-from shared import extract_sponsor_matches, ACTION_OPTIONS, CATEGORIES, CATGEGORY_OPTIONS, START_SEGMENT_TEMPLATE, END_SEGMENT_TEMPLATE, GeneralArguments, CustomTokens
+from shared import extract_sponsor_matches_from_text, ACTION_OPTIONS, CATEGORIES, CATGEGORY_OPTIONS, START_SEGMENT_TEMPLATE, END_SEGMENT_TEMPLATE, GeneralArguments, CustomTokens
 import csv
 import re
 import random
@@ -418,9 +418,9 @@ class PreprocessArguments:
     num_jobs: int = field(
         default=4, metadata={'help': 'Number of transcripts to download in parallel'})
 
-    overwrite: bool = field(
-        default=False, metadata={'help': 'Overwrite training, testing and validation data, if present.'}
-    )
+    # overwrite: bool = field(
+    #     default=False, metadata={'help': 'Overwrite training, testing and validation data, if present.'}
+    # )
 
     do_generate: bool = field(
         default=False, metadata={'help': 'Generate labelled data.'}
@@ -538,11 +538,11 @@ def main():
     # TODO process all valid possible items and then do filtering only later
     @lru_cache(maxsize=1)
     def read_db():
-        if not preprocess_args.overwrite and os.path.exists(processed_db_path):
-            logger.info(
-                'Using cached processed database (use `--overwrite` to avoid this behaviour).')
-            with open(processed_db_path) as fp:
-                return json.load(fp)
+        # if not preprocess_args.overwrite and os.path.exists(processed_db_path):
+        #     logger.info(
+        #         'Using cached processed database (use `--overwrite` to avoid this behaviour).')
+        #     with open(processed_db_path) as fp:
+        #         return json.load(fp)
         logger.info('Processing raw database')
         db = {}
 
@@ -916,11 +916,8 @@ def main():
         # Output training, testing and validation data
         for name, items in splits.items():
             outfile = os.path.join(dataset_args.data_dir, name)
-            if not os.path.exists(outfile) or preprocess_args.overwrite:
-                with open(outfile, 'w', encoding='utf-8') as fp:
-                    fp.writelines(items)
-            else:
-                logger.info(f'Skipping {name}')
+            with open(outfile, 'w', encoding='utf-8') as fp:
+                fp.writelines(items)
 
         classifier_splits = {
             dataset_args.c_train_file: train_data,
@@ -933,31 +930,24 @@ def main():
         # Output training, testing and validation data
         for name, items in classifier_splits.items():
             outfile = os.path.join(dataset_args.data_dir, name)
-            if not os.path.exists(outfile) or preprocess_args.overwrite:
-                with open(outfile, 'w', encoding='utf-8') as fp:
-                    for i in items:
-                        x = json.loads(i)  # TODO add uuid
-                        labelled_items = []
+            with open(outfile, 'w', encoding='utf-8') as fp:
+                for item in items:
+                    parsed_item = json.loads(item)  # TODO add uuid
 
-                        matches = extract_sponsor_matches(x['extracted'])
+                    matches = extract_sponsor_matches_from_text(parsed_item['extracted'])
 
-                        if x['extracted'] == CustomTokens.NO_SEGMENT.value:
-                            labelled_items.append({
-                                'text': x['text'],
-                                'label': none_category
-                            })
-                        else:
-                            for match in matches:
-                                labelled_items.append({
-                                    'text': match['text'],
-                                    'label': CATEGORIES.index(match['category'])
-                                })
+                    if matches:
+                        for match in matches:
+                            print(json.dumps({
+                                'text': match['text'],
+                                'label': CATEGORIES.index(match['category'])
+                            }), file=fp)
+                    else:
+                        print(json.dumps({
+                            'text': parsed_item['text'],
+                            'label': none_category
+                        }), file=fp)
 
-                        for labelled_item in labelled_items:
-                            print(json.dumps(labelled_item), file=fp)
-
-            else:
-                logger.info(f'Skipping {name}')
 
         logger.info('Write')
         # Save excess items
