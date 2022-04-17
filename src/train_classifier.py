@@ -4,7 +4,7 @@
 import logging
 import os
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 
 import datasets
@@ -16,11 +16,20 @@ from transformers import (
     EvalPrediction,
     HfArgumentParser,
     Trainer,
+    TrainingArguments,
     set_seed,
 )
 from transformers.utils import check_min_version
 from transformers.utils.versions import require_version
-from shared import CATEGORIES, DatasetArguments, prepare_datasets, load_datasets, CustomTrainingArguments, train_from_checkpoint, get_last_checkpoint
+from shared import (
+    CATEGORIES,
+    DatasetArguments,
+    prepare_datasets,
+    load_datasets,
+    CustomTrainingArguments,
+    train_from_checkpoint,
+    get_last_checkpoint
+)
 from model import get_model_tokenizer, ModelArguments
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
@@ -33,22 +42,18 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
+class ClassifierTrainingArguments(CustomTrainingArguments, TrainingArguments):
+    pass
+
+
+@dataclass
 class ClassifierDatasetArguments(DatasetArguments):
-    train_file: Optional[str] = field(
-        default='c_train.json', metadata={'help': 'The input training data file (a jsonlines file).'}
-    )
-    validation_file: Optional[str] = field(
-        default='c_valid.json',
-        metadata={
-            'help': 'An optional input evaluation data file to evaluate the metrics on (a jsonlines file).'
-        },
-    )
-    test_file: Optional[str] = field(
-        default='c_test.json',
-        metadata={
-            'help': 'An optional input test data file to evaluate the metrics on (a jsonlines file).'
-        },
-    )
+    train_file: Optional[str] = DatasetArguments.__dataclass_fields__[
+        'c_train_file']
+    validation_file: Optional[str] = DatasetArguments.__dataclass_fields__[
+        'c_validation_file']
+    test_file: Optional[str] = DatasetArguments.__dataclass_fields__[
+        'c_test_file']
 
 
 def main():
@@ -59,7 +64,7 @@ def main():
     hf_parser = HfArgumentParser((
         ModelArguments,
         ClassifierDatasetArguments,
-        CustomTrainingArguments
+        ClassifierTrainingArguments
     ))
     model_args, dataset_args, training_args = hf_parser.parse_args_into_dataclasses()
 

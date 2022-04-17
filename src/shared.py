@@ -1,5 +1,5 @@
 from transformers.trainer_utils import get_last_checkpoint as glc
-from transformers import TrainingArguments
+from transformers import Seq2SeqTrainingArguments, TrainingArguments
 import os
 from utils import re_findall
 import logging
@@ -76,14 +76,15 @@ _SEGMENT_END = END_SEGMENT_TEMPLATE.format(r'\w+')
 SEGMENT_MATCH_RE = fr'{_SEGMENT_START}\s*(?P<text>.*?)\s*(?:{_SEGMENT_END}|$)'
 
 
+def extract_sponsor_matches_from_text(text):
+    if CustomTokens.NO_SEGMENT.value in text:
+        return []
+    else:
+        return re_findall(SEGMENT_MATCH_RE, text)
+
+
 def extract_sponsor_matches(texts):
-    to_return = []
-    for text in texts:
-        if CustomTokens.NO_SEGMENT.value in text:
-            to_return.append([])
-        else:
-            to_return.append(re_findall(SEGMENT_MATCH_RE, text))
-    return to_return
+    return list(map(extract_sponsor_matches_from_text, texts))
 
 
 @dataclass
@@ -129,6 +130,22 @@ class DatasetArguments:
     )
     test_file: Optional[str] = field(
         default='test.json',
+        metadata={
+            'help': 'An optional input test data file to evaluate the metrics on (a jsonlines file).'
+        },
+    )
+
+    c_train_file: Optional[str] = field(
+        default='c_train.json', metadata={'help': 'The input training data file (a jsonlines file).'}
+    )
+    c_validation_file: Optional[str] = field(
+        default='c_valid.json',
+        metadata={
+            'help': 'An optional input evaluation data file to evaluate the metrics on (a jsonlines file).'
+        },
+    )
+    c_test_file: Optional[str] = field(
+        default='c_test.json',
         metadata={
             'help': 'An optional input test data file to evaluate the metrics on (a jsonlines file).'
         },
@@ -234,7 +251,7 @@ def load_datasets(dataset_args: DatasetArguments):
 
 
 @dataclass
-class CustomTrainingArguments(OutputArguments, TrainingArguments):
+class AdditionalTrainingArguments:
     seed: Optional[int] = GeneralArguments.__dataclass_fields__['seed']
 
     num_train_epochs: float = field(
@@ -242,7 +259,7 @@ class CustomTrainingArguments(OutputArguments, TrainingArguments):
 
     save_steps: int = field(default=5000, metadata={
                             'help': 'Save checkpoint every X updates steps.'})
-    eval_steps: int = field(default=5000, metadata={
+    eval_steps: int = field(default=25000, metadata={
                             'help': 'Run an evaluation every X steps.'})
     logging_steps: int = field(default=5000, metadata={
                                'help': 'Log every X updates steps.'})
@@ -309,6 +326,11 @@ class CustomTrainingArguments(OutputArguments, TrainingArguments):
             "value if set."
         },
     )
+
+
+@dataclass
+class CustomTrainingArguments(OutputArguments, AdditionalTrainingArguments):
+    pass
 
 
 logging.basicConfig()

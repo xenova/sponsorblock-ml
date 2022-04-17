@@ -1,6 +1,6 @@
-from preprocess import PreprocessingDatasetArguments
 from shared import (
     CustomTokens,
+    DatasetArguments,
     prepare_datasets,
     load_datasets,
     CustomTrainingArguments,
@@ -17,13 +17,15 @@ from transformers import (
     DataCollatorForSeq2Seq,
     HfArgumentParser,
     Seq2SeqTrainer,
+    Seq2SeqTrainingArguments,
 )
 
 from transformers.utils import check_min_version
 from transformers.utils.versions import require_version
+from dataclasses import dataclass
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
-check_min_version('4.13.0.dev0')
+check_min_version('4.17.0')
 require_version('datasets>=1.8.0',
                 'To fix: pip install -r requirements.txt')
 
@@ -40,6 +42,11 @@ logging.basicConfig(
 )
 
 
+@dataclass
+class Seq2SeqTrainingArguments(CustomTrainingArguments, Seq2SeqTrainingArguments):
+    pass
+
+
 def main():
 
     # See all possible arguments in src/transformers/training_args.py
@@ -48,8 +55,8 @@ def main():
 
     hf_parser = HfArgumentParser((
         ModelArguments,
-        PreprocessingDatasetArguments,
-        CustomTrainingArguments
+        DatasetArguments,
+        Seq2SeqTrainingArguments
     ))
     model_args, dataset_args, training_args = hf_parser.parse_args_into_dataclasses()
 
