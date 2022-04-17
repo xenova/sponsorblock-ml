@@ -1,5 +1,4 @@
 from transformers.trainer_utils import get_last_checkpoint as glc
-from transformers import Seq2SeqTrainingArguments, TrainingArguments
 import os
 from utils import re_findall
 import logging
@@ -14,6 +13,17 @@ import torch
 from typing import Optional
 from dataclasses import dataclass, field
 from enum import Enum
+
+
+logging.basicConfig()
+logger = logging.getLogger(__name__)
+
+# Setup logging
+logging.basicConfig(
+    format='%(asctime)s - %(levelname)s - %(name)s - %(message)s',
+    datefmt='%m/%d/%Y %H:%M:%S',
+    handlers=[logging.StreamHandler(sys.stdout)],
+)
 
 CATEGORIES = [None, 'SPONSOR', 'SELFPROMO', 'INTERACTION']
 
@@ -234,7 +244,7 @@ def reset():
 
 def load_datasets(dataset_args: DatasetArguments):
 
-    print('Reading datasets')
+    logger.info('Reading datasets')
     data_files = {}
 
     if dataset_args.train_file is not None:
@@ -331,17 +341,6 @@ class AdditionalTrainingArguments:
 @dataclass
 class CustomTrainingArguments(OutputArguments, AdditionalTrainingArguments):
     pass
-
-
-logging.basicConfig()
-logger = logging.getLogger(__name__)
-
-# Setup logging
-logging.basicConfig(
-    format='%(asctime)s - %(levelname)s - %(name)s - %(message)s',
-    datefmt='%m/%d/%Y %H:%M:%S',
-    handlers=[logging.StreamHandler(sys.stdout)],
-)
 
 
 def get_last_checkpoint(training_args):
