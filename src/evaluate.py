@@ -218,12 +218,11 @@ def main():
                     for sponsor_segment in sponsor_segments:
                         segment_words = extract_segment(
                             words,  sponsor_segment['start'],  sponsor_segment['end'])
-                        sponsor_segment['text'] = ' '.join(x['cleaned'] for x in segment_words)
+                        sponsor_segment['text'] = ' '.join(x['text'] for x in segment_words)
+                        sponsor_segment['cleaned_text'] = ' '.join(x['cleaned'] for x in segment_words)
 
-                        duration = sponsor_segment['end'] - \
-                            sponsor_segment['start']
-                        wps = len(segment_words) / \
-                            duration if duration > 0 else 0
+                        duration = sponsor_segment['end'] - sponsor_segment['start']
+                        wps = (len(segment_words) / duration) if duration > 0 else 0
                         if wps < 1.5:
                             continue
 
@@ -232,7 +231,7 @@ def main():
                         if sponsor_segment['locked']:
                             continue
 
-                        texts.append(sponsor_segment['text'])
+                        texts.append(sponsor_segment['cleaned_text'])
                         segments_to_check.append(sponsor_segment)
 
                     if segments_to_check:  # Segments to check
