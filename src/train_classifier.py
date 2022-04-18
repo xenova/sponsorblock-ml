@@ -48,12 +48,10 @@ class ClassifierTrainingArguments(CustomTrainingArguments, TrainingArguments):
 
 @dataclass
 class ClassifierDatasetArguments(DatasetArguments):
-    train_file: Optional[str] = DatasetArguments.__dataclass_fields__[
-        'c_train_file']
-    validation_file: Optional[str] = DatasetArguments.__dataclass_fields__[
-        'c_validation_file']
-    test_file: Optional[str] = DatasetArguments.__dataclass_fields__[
-        'c_test_file']
+    def __post_init__(self):
+        self.train_file = self.c_train_file
+        self.validation_file = self.c_validation_file
+        self.test_file = self.c_test_file
 
 
 def main():
