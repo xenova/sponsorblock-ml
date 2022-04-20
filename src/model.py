@@ -116,7 +116,7 @@ class InferenceArguments(ModelArguments):
         }
     )
     classifier_model_name_or_path: str = field(
-        default='Xenova/sponsorblock-classifier-v2',
+        default='EColi/SB_Classifier',
         metadata={
             'help': 'Use a pretrained classifier'
         }
