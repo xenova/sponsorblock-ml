@@ -1,8 +1,8 @@
 
 from model import get_model_tokenizer_classifier, InferenceArguments
-from utils import jaccard
+from utils import jaccard, safe_print
 from transformers import HfArgumentParser
-from preprocess import get_words
+from preprocess import get_words, clean_text
 from shared import GeneralArguments, DatasetArguments
 from predict import predict
 from segment import extract_segment, word_start, word_end, SegmentationArguments, add_labels_to_words
@@ -31,6 +31,19 @@ class EvaluationArguments(InferenceArguments):
         }
     )
 
+    skip_missing: bool = field(
+        default=False,
+        metadata={
+            'help': 'Whether to skip checking for missing segments. If False, predictions will be made.'
+        }
+    )
+    skip_incorrect: bool = field(
+        default=False,
+        metadata={
+            'help': 'Whether to skip checking for incorrect segments. If False, classifications will be made on existing segments.'
+        }
+    )
+
 
 def attach_predictions_to_sponsor_segments(predictions, sponsor_segments):
     """Attach sponsor segments to closest prediction"""
@@ -46,7 +59,7 @@ def attach_predictions_to_sponsor_segments(predictions, sponsor_segments):
                 prediction['best_overlap'] = j
                 prediction['best_sponsorship'] = sponsor_segment
 
-    # return sponsor_segments
+    return sponsor_segments
 
 
 def calculate_metrics(labelled_words, predictions):
@@ -130,6 +143,10 @@ def main():
 
     evaluation_args, dataset_args, segmentation_args, general_args = hf_parser.parse_args_into_dataclasses()
 
+    if evaluation_args.skip_missing and evaluation_args.skip_incorrect:
+        logger.error('ERROR: Nothing to do')
+        return
+
     # Load labelled data:
     final_path = os.path.join(
         dataset_args.data_dir, dataset_args.processed_file)
@@ -158,14 +175,22 @@ def main():
         if evaluation_args.max_videos is not None:
             video_ids = video_ids[:evaluation_args.max_videos]
 
-    # TODO option to choose categories
-
-    total_accuracy = 0
-    total_precision = 0
-    total_recall = 0
-    total_fscore = 0
-
     out_metrics = []
+
+    all_metrics = {}
+    if not evaluation_args.skip_missing:
+        all_metrics['total_prediction_accuracy'] = 0
+        all_metrics['total_prediction_precision'] = 0
+        all_metrics['total_prediction_recall'] = 0
+        all_metrics['total_prediction_fscore'] = 0
+
+    if not evaluation_args.skip_incorrect:
+        all_metrics['classifier_segment_correct'] = 0
+        all_metrics['classifier_segment_count'] = 0
+
+    metric_count = 0
+
+    postfix_info = {}
 
     try:
         with tqdm(video_ids) as progress:
@@ -176,53 +201,77 @@ def main():
                 if not words:
                     continue
 
-                # Make predictions
-                predictions = predict(video_id, model, tokenizer, segmentation_args,
-                                      classifier=classifier,
-                                      min_probability=evaluation_args.min_probability)
-
                 # Get labels
                 sponsor_segments = final_data.get(video_id)
-                if sponsor_segments:
-                    labelled_words = add_labels_to_words(
-                        words, sponsor_segments)
-                    met = calculate_metrics(labelled_words, predictions)
-                    met['video_id'] = video_id
 
-                    out_metrics.append(met)
+                # Reset previous
+                missed_segments = []
+                incorrect_segments = []
 
-                    total_accuracy += met['accuracy']
-                    total_precision += met['precision']
-                    total_recall += met['recall']
-                    total_fscore += met['f-score']
+                current_metrics = {
+                    'video_id': video_id
+                }
+                metric_count += 1
 
-                    progress.set_postfix({
-                        'accuracy': total_accuracy/len(out_metrics),
-                        'precision':  total_precision/len(out_metrics),
-                        'recall':  total_recall/len(out_metrics),
-                        'f-score': total_fscore/len(out_metrics)
-                    })
+                if not evaluation_args.skip_missing:  # Make predictions
+                    predictions = predict(video_id, model, tokenizer, segmentation_args,
+                                          classifier=classifier,
+                                          min_probability=evaluation_args.min_probability)
 
-                    attach_predictions_to_sponsor_segments(
-                        predictions, sponsor_segments)
+                    if sponsor_segments:
+                        labelled_words = add_labels_to_words(
+                            words, sponsor_segments)
 
-                    # Identify possible issues:
-                    missed_segments = [
-                        prediction for prediction in predictions if prediction['best_sponsorship'] is None]
+                        current_metrics.update(
+                            calculate_metrics(labelled_words, predictions))
 
-                    # Now, check for incorrect segments using the classifier
-                    incorrect_segments = []
+                        all_metrics['total_prediction_accuracy'] += current_metrics['accuracy']
+                        all_metrics['total_prediction_precision'] += current_metrics['precision']
+                        all_metrics['total_prediction_recall'] += current_metrics['recall']
+                        all_metrics['total_prediction_fscore'] += current_metrics['f-score']
+
+                        # Just for display purposes
+                        postfix_info.update({
+                            'accuracy': all_metrics['total_prediction_accuracy']/metric_count,
+                            'precision':  all_metrics['total_prediction_precision']/metric_count,
+                            'recall':  all_metrics['total_prediction_recall']/metric_count,
+                            'f-score': all_metrics['total_prediction_fscore']/metric_count,
+                        })
+
+                        sponsor_segments = attach_predictions_to_sponsor_segments(
+                            predictions, sponsor_segments)
+
+                        # Identify possible issues:
+                        for prediction in predictions:
+                            if prediction['best_sponsorship'] is not None:
+                                continue
+
+                            prediction_words = prediction.pop('words', [])
+
+                            # Attach original text to missed segments
+                            prediction['text'] = ' '.join(
+                                x['text'] for x in prediction_words)
+                            missed_segments.append(prediction)
+
+                    else:
+                        # Not in database (all segments missed)
+                        missed_segments = predictions
+
+                if not evaluation_args.skip_incorrect and sponsor_segments:
+                    # Check for incorrect segments using the classifier
 
                     segments_to_check = []
                     texts = []  # Texts to send through tokenizer
                     for sponsor_segment in sponsor_segments:
                         segment_words = extract_segment(
                             words,  sponsor_segment['start'],  sponsor_segment['end'])
-                        sponsor_segment['text'] = ' '.join(x['text'] for x in segment_words)
-                        sponsor_segment['cleaned_text'] = ' '.join(x['cleaned'] for x in segment_words)
+                        sponsor_segment['text'] = ' '.join(
+                            x['text'] for x in segment_words)
 
-                        duration = sponsor_segment['end'] - sponsor_segment['start']
-                        wps = (len(segment_words) / duration) if duration > 0 else 0
+                        duration = sponsor_segment['end'] - \
+                            sponsor_segment['start']
+                        wps = (len(segment_words) /
+                               duration) if duration > 0 else 0
                         if wps < 1.5:
                             continue
 
@@ -231,18 +280,24 @@ def main():
                         if sponsor_segment['locked']:
                             continue
 
+                        sponsor_segment['cleaned_text'] = clean_text(
+                            sponsor_segment['text'])
                         texts.append(sponsor_segment['cleaned_text'])
                         segments_to_check.append(sponsor_segment)
 
-                    if segments_to_check:  # Segments to check
+                    if segments_to_check:  # Some segments to check
 
                         segments_scores = classifier(texts)
 
+                        num_correct = 0
                         for segment, scores in zip(segments_to_check, segments_scores):
+                            all_metrics['classifier_segment_count'] += 1
+
                             prediction = max(scores, key=lambda x: x['score'])
                             predicted_category = prediction['label'].lower()
 
                             if predicted_category == segment['category']:
+                                num_correct += 1
                                 continue  # Ignore correct segments
 
                             segment.update({
@@ -252,18 +307,19 @@ def main():
 
                             incorrect_segments.append(segment)
 
-                else:
-                    # logger.warning(f'No labels found for {video_id}')
-                    # Not in database (all segments missed)
-                    missed_segments = predictions
-                    incorrect_segments = []
+                        current_metrics['num_segments'] = len(
+                            segments_to_check)
+                        current_metrics['classified_correct'] = num_correct
+
+                        all_metrics['classifier_segment_correct'] += num_correct
+
+                    postfix_info['classifier_accuracy'] = all_metrics['classifier_segment_correct'] / \
+                        all_metrics['classifier_segment_count']
+
+                out_metrics.append(current_metrics)
+                progress.set_postfix(postfix_info)
 
                 if missed_segments or incorrect_segments:
-                    for z in missed_segments: 
-                        # Attach original text to missed segments
-                        # (Already added to incorrect segments)
-                        z['text'] = ' '.join(x['text']
-                                             for x in z.pop('words', []))
 
                     if evaluation_args.output_as_json:
                         to_print = {'video_id': video_id}
@@ -274,23 +330,25 @@ def main():
                         if incorrect_segments:
                             to_print['incorrect'] = incorrect_segments
 
-                        print(json.dumps(to_print))
+                        safe_print(json.dumps(to_print))
+
                     else:
-                        print(
+                        safe_print(
                             f'Issues identified for {video_id} (#{video_index})')
                         # Potentially missed segments (model predicted, but not in database)
                         if missed_segments:
-                            print(' - Missed segments:')
+                            safe_print(' - Missed segments:')
                             segments_to_submit = []
                             for i, missed_segment in enumerate(missed_segments, start=1):
-                                print(f'\t#{i}:', seconds_to_time(
+                                safe_print(f'\t#{i}:', seconds_to_time(
                                     missed_segment['start']), '-->', seconds_to_time(missed_segment['end']))
-                                print('\t\tText: "', missed_segment['text'], '"', sep='')
-                                print('\t\tCategory:',
-                                      missed_segment.get('category'))
+                                safe_print('\t\tText: "',
+                                           missed_segment['text'], '"', sep='')
+                                safe_print('\t\tCategory:',
+                                           missed_segment.get('category'))
                                 if 'probability' in missed_segment:
-                                    print('\t\tProbability:',
-                                          missed_segment['probability'])
+                                    safe_print('\t\tProbability:',
+                                               missed_segment['probability'])
 
                                 segments_to_submit.append({
                                     'segment': [missed_segment['start'], missed_segment['end']],
@@ -299,33 +357,37 @@ def main():
                                 })
 
                             json_data = quote(json.dumps(segments_to_submit))
-                            print(
+                            safe_print(
                                 f'\tSubmit: https://www.youtube.com/watch?v={video_id}#segments={json_data}')
 
                         # Incorrect segments (in database, but incorrectly classified)
                         if incorrect_segments:
-                            print(' - Incorrect segments:')
+                            safe_print(' - Incorrect segments:')
                             for i, incorrect_segment in enumerate(incorrect_segments, start=1):
-                                print(f'\t#{i}:', seconds_to_time(
+                                safe_print(f'\t#{i}:', seconds_to_time(
                                     incorrect_segment['start']), '-->', seconds_to_time(incorrect_segment['end']))
 
-                                print('\t\tText: "', incorrect_segment['text'], '"', sep='')
-                                print('\t\tUUID:', incorrect_segment['uuid'])
-                                print('\t\tVotes:', incorrect_segment['votes'])
-                                print('\t\tViews:', incorrect_segment['views'])
-                                print('\t\tLocked:',
-                                      incorrect_segment['locked'])
+                                safe_print(
+                                    '\t\tText: "', incorrect_segment['text'], '"', sep='')
+                                safe_print(
+                                    '\t\tUUID:', incorrect_segment['uuid'])
+                                safe_print(
+                                    '\t\tVotes:', incorrect_segment['votes'])
+                                safe_print(
+                                    '\t\tViews:', incorrect_segment['views'])
+                                safe_print('\t\tLocked:',
+                                           incorrect_segment['locked'])
 
-                                print('\t\tCurrent Category:',
-                                      incorrect_segment['category'])
-                                print('\t\tPredicted Category:',
-                                      incorrect_segment['predicted'])
-                                print('\t\tProbabilities:')
+                                safe_print('\t\tCurrent Category:',
+                                           incorrect_segment['category'])
+                                safe_print('\t\tPredicted Category:',
+                                           incorrect_segment['predicted'])
+                                safe_print('\t\tProbabilities:')
                                 for item in incorrect_segment['scores']:
-                                    print(
+                                    safe_print(
                                         f"\t\t\t{item['label']}: {item['score']}")
 
-                        print()
+                        safe_print()
 
     except KeyboardInterrupt:
         pass
