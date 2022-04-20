@@ -261,7 +261,7 @@ def main():
                     # Check for incorrect segments using the classifier
 
                     segments_to_check = []
-                    texts = []  # Texts to send through tokenizer
+                    cleaned_texts = []  # Texts to send through tokenizer
                     for sponsor_segment in sponsor_segments:
                         segment_words = extract_segment(
                             words,  sponsor_segment['start'],  sponsor_segment['end'])
@@ -280,17 +280,22 @@ def main():
                         if sponsor_segment['locked']:
                             continue
 
-                        sponsor_segment['cleaned_text'] = clean_text(
-                            sponsor_segment['text'])
-                        texts.append(sponsor_segment['cleaned_text'])
+                        cleaned_texts.append(
+                            clean_text(sponsor_segment['text']))
                         segments_to_check.append(sponsor_segment)
 
                     if segments_to_check:  # Some segments to check
 
-                        segments_scores = classifier(texts)
+                        segments_scores = classifier(cleaned_texts)
 
                         num_correct = 0
                         for segment, scores in zip(segments_to_check, segments_scores):
+
+                            fixed_scores = {
+                                score['label']: score['score']
+                                for score in scores
+                            }
+
                             all_metrics['classifier_segment_count'] += 1
 
                             prediction = max(scores, key=lambda x: x['score'])
@@ -302,7 +307,7 @@ def main():
 
                             segment.update({
                                 'predicted': predicted_category,
-                                'scores': scores
+                                'scores': fixed_scores
                             })
 
                             incorrect_segments.append(segment)
@@ -313,8 +318,9 @@ def main():
 
                         all_metrics['classifier_segment_correct'] += num_correct
 
-                    postfix_info['classifier_accuracy'] = all_metrics['classifier_segment_correct'] / \
-                        all_metrics['classifier_segment_count']
+                    if all_metrics['classifier_segment_count'] > 0:
+                        postfix_info['classifier_accuracy'] = all_metrics['classifier_segment_correct'] / \
+                            all_metrics['classifier_segment_count']
 
                 out_metrics.append(current_metrics)
                 progress.set_postfix(postfix_info)
@@ -383,9 +389,9 @@ def main():
                                 safe_print('\t\tPredicted Category:',
                                            incorrect_segment['predicted'])
                                 safe_print('\t\tProbabilities:')
-                                for item in incorrect_segment['scores']:
+                                for label, score in incorrect_segment['scores'].items():
                                     safe_print(
-                                        f"\t\t\t{item['label']}: {item['score']}")
+                                        f"\t\t\t{label}: {score}")
 
                         safe_print()
 
