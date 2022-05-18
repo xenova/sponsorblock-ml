@@ -205,7 +205,17 @@ def main():
         ts_type_id = st.selectbox(
             'Transcript type', TRANSCRIPT_TYPES.keys(), index=0, format_func=lambda x: TRANSCRIPT_TYPES[x]['label'], on_change=output.empty)
 
-    video_input = top.text_input('Video URL/ID:', on_change=output.empty)
+    query_params = st.experimental_get_query_params()
+
+    video_id = None
+    
+    if 'v' in query_params:
+        video_id = query_params['v'][0]
+
+    if video_id is None:
+        video_input = top.text_input('Video URL/ID:', on_change=output.empty)
+    else :
+        video_input = top.text_input('Video URL/ID:', on_change=output.empty,value = video_id)
     categories = top.multiselect('Categories:',
                                  CATGEGORY_OPTIONS.keys(),
                                  CATGEGORY_OPTIONS.keys(),
@@ -284,7 +294,7 @@ def main():
                 st.write(f"**Confidence:** {confidence:.2f}%")
                 st.write(f'**Text:** "{text}"')
 
-        if len(submit_segments) == 0:
+        if not submit_segments:
             st.success(
                 f'No segments found! ({len(predictions)} ignored due to filters/settings)')
             return
