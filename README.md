@@ -11,7 +11,7 @@ pinned: true
 # SponsorBlock-ML
 Automatically detect in-video YouTube sponsorships, self/unpaid promotions, and interaction reminders. The model was trained using the [SponsorBlock](https://sponsor.ajay.app/) [database](https://sponsor.ajay.app/database) licensed used under [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/).
 
-Check out the online demo application at [https://xenova.github.io/sponsorblock-ml/](https://xenova.github.io/sponsorblock-ml/), or follow the instructions below to run it locally.
+Check out the online demo application at [https://huggingface.co/spaces/Xenova/sponsorblock-ml](https://huggingface.co/spaces/Xenova/sponsorblock-ml), or follow the instructions below to run it locally.
 
 ---
 ## Installation
