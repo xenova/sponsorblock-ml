@@ -19,6 +19,7 @@ import os
 import json
 import time
 import requests
+import shutil
 
 
 logging.basicConfig()
@@ -479,29 +480,18 @@ class PreprocessArguments:
 
 # Mirrors for database
 MIRRORS = [
-    'https://sponsor.ajay.app/database/sponsorTimes.csv',  # Latest
-    'https://sb-mirror.mchang.xyz/sponsorTimes.csv',  # 5 minute delay
     'https://sb.ltn.fi/database/sponsorTimes.csv',  # 5 minute delay
 ]
 # TODO only download latest updates/changes
 
 
+
 def download_file(url, filename):
-    """
-    Helper method handling downloading large files from `url` to `filename`.
+    with requests.get(url, stream=True) as r:
+        with open(filename, 'wb') as f:
+            shutil.copyfileobj(r.raw, f)
 
-    Adapted from https://stackoverflow.com/a/42071418
-    """
-    chunk_size = 1024
-    r = requests.get(url, stream=True)
-    total_bytes = int(r.headers['Content-Length'])
-    with open(filename, 'wb') as f, tqdm(unit='B', total=total_bytes) as progress:
-        for chunk in r.iter_content(chunk_size=chunk_size):
-            if chunk:  # filter out keep-alive new chunks
-                progress.update(len(chunk))
-                f.write(chunk)
-
-    return total_bytes == os.path.getsize(filename)
+    return filename
 
 
 def main():
